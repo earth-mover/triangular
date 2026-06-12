@@ -1,0 +1,2281 @@
+{
+  "triangle_version": "20250106",
+  "seed": 20250106,
+  "cases": [
+    {
+      "name": "bundled_A",
+      "category": "bundled",
+      "n_points": 29,
+      "points_file": "cases/bundled_A/points.npy",
+      "notes": "triangle.get_data('A')['vertices']",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/bundled_A/delaunay.npy",
+        "n_triangles": 48,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/bundled_A/convex_hull.npy",
+        "n_edges": 8,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0133,
+        "convex_hull": 0.0122
+      }
+    },
+    {
+      "name": "bundled_dots",
+      "category": "bundled",
+      "n_points": 100,
+      "points_file": "cases/bundled_dots/points.npy",
+      "notes": "triangle.get_data('dots')['vertices']",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/bundled_dots/delaunay.npy",
+        "n_triangles": 187,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/bundled_dots/convex_hull.npy",
+        "n_edges": 11,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0205,
+        "convex_hull": 0.0175
+      }
+    },
+    {
+      "name": "bundled_spiral",
+      "category": "bundled",
+      "n_points": 15,
+      "points_file": "cases/bundled_spiral/points.npy",
+      "notes": "triangle.get_data('spiral')['vertices']",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/bundled_spiral/delaunay.npy",
+        "n_triangles": 15,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/bundled_spiral/convex_hull.npy",
+        "n_edges": 13,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0104,
+        "convex_hull": 0.0105
+      }
+    },
+    {
+      "name": "bundled_diamond_02_00009",
+      "category": "bundled",
+      "n_points": 9,
+      "points_file": "cases/bundled_diamond_02_00009/points.npy",
+      "notes": "triangle.get_data('diamond_02_00009')['vertices']",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/bundled_diamond_02_00009/delaunay.npy",
+        "n_triangles": 12,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/bundled_diamond_02_00009/convex_hull.npy",
+        "n_edges": 4,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0097,
+        "convex_hull": 0.01
+      }
+    },
+    {
+      "name": "bundled_ell",
+      "category": "bundled",
+      "n_points": 21,
+      "points_file": "cases/bundled_ell/points.npy",
+      "notes": "triangle.get_data('ell')['vertices']",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/bundled_ell/delaunay.npy",
+        "n_triangles": 27,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/bundled_ell/convex_hull.npy",
+        "n_edges": 13,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0103,
+        "convex_hull": 0.0119
+      }
+    },
+    {
+      "name": "bundled_face",
+      "category": "bundled",
+      "n_points": 26,
+      "points_file": "cases/bundled_face/points.npy",
+      "notes": "triangle.get_data('face')['vertices']",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/bundled_face/delaunay.npy",
+        "n_triangles": 44,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/bundled_face/convex_hull.npy",
+        "n_edges": 6,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0141,
+        "convex_hull": 0.0113
+      }
+    },
+    {
+      "name": "bundled_la",
+      "category": "bundled",
+      "n_points": 141,
+      "points_file": "cases/bundled_la/points.npy",
+      "notes": "triangle.get_data('la')['vertices']",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/bundled_la/delaunay.npy",
+        "n_triangles": 265,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/bundled_la/convex_hull.npy",
+        "n_edges": 15,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0215,
+        "convex_hull": 0.0213
+      }
+    },
+    {
+      "name": "bundled_greenland",
+      "category": "bundled",
+      "n_points": 33343,
+      "points_file": "cases/bundled_greenland/points.npy",
+      "notes": "triangle.get_data('greenland')['vertices']",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/bundled_greenland/delaunay.npy",
+        "n_triangles": 66647,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/bundled_greenland/convex_hull.npy",
+        "n_edges": 37,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 9.7103,
+        "convex_hull": 10.4238
+      }
+    },
+    {
+      "name": "bundled_box_1",
+      "category": "bundled",
+      "n_points": 8,
+      "points_file": "cases/bundled_box_1/points.npy",
+      "notes": "triangle.get_data('box.1')['vertices']",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/bundled_box_1/delaunay.npy",
+        "n_triangles": 10,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/bundled_box_1/convex_hull.npy",
+        "n_edges": 4,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0108,
+        "convex_hull": 0.0104
+      }
+    },
+    {
+      "name": "bundled_box_2",
+      "category": "bundled",
+      "n_points": 40,
+      "points_file": "cases/bundled_box_2/points.npy",
+      "notes": "triangle.get_data('box.2')['vertices']",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/bundled_box_2/delaunay.npy",
+        "n_triangles": 65,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/bundled_box_2/convex_hull.npy",
+        "n_edges": 13,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0136,
+        "convex_hull": 0.0125
+      }
+    },
+    {
+      "name": "bundled_box_3",
+      "category": "bundled",
+      "n_points": 142,
+      "points_file": "cases/bundled_box_3/points.npy",
+      "notes": "triangle.get_data('box.3')['vertices']",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/bundled_box_3/delaunay.npy",
+        "n_triangles": 254,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/bundled_box_3/convex_hull.npy",
+        "n_edges": 28,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0289,
+        "convex_hull": 0.0225
+      }
+    },
+    {
+      "name": "bundled_box_4",
+      "category": "bundled",
+      "n_points": 531,
+      "points_file": "cases/bundled_box_4/points.npy",
+      "notes": "triangle.get_data('box.4')['vertices']",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/bundled_box_4/delaunay.npy",
+        "n_triangles": 1002,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/bundled_box_4/convex_hull.npy",
+        "n_edges": 58,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0766,
+        "convex_hull": 0.0623
+      }
+    },
+    {
+      "name": "bundled_double_hex_1",
+      "category": "bundled",
+      "n_points": 96,
+      "points_file": "cases/bundled_double_hex_1/points.npy",
+      "notes": "triangle.get_data('double_hex.1')['vertices']",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/bundled_double_hex_1/delaunay.npy",
+        "n_triangles": 118,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/bundled_double_hex_1/convex_hull.npy",
+        "n_edges": 72,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0228,
+        "convex_hull": 0.0196
+      }
+    },
+    {
+      "name": "bundled_double_hex_2",
+      "category": "bundled",
+      "n_points": 525,
+      "points_file": "cases/bundled_double_hex_2/points.npy",
+      "notes": "triangle.get_data('double_hex.2')['vertices']",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/bundled_double_hex_2/delaunay.npy",
+        "n_triangles": 976,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/bundled_double_hex_2/convex_hull.npy",
+        "n_edges": 72,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0889,
+        "convex_hull": 0.07
+      }
+    },
+    {
+      "name": "bundled_double_hex2_1",
+      "category": "bundled",
+      "n_points": 48,
+      "points_file": "cases/bundled_double_hex2_1/points.npy",
+      "notes": "triangle.get_data('double_hex2.1')['vertices']",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/bundled_double_hex2_1/delaunay.npy",
+        "n_triangles": 58,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/bundled_double_hex2_1/convex_hull.npy",
+        "n_edges": 36,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0163,
+        "convex_hull": 0.0147
+      }
+    },
+    {
+      "name": "bundled_double_hex3_1",
+      "category": "bundled",
+      "n_points": 531,
+      "points_file": "cases/bundled_double_hex3_1/points.npy",
+      "notes": "triangle.get_data('double_hex3.1')['vertices']",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/bundled_double_hex3_1/delaunay.npy",
+        "n_triangles": 988,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/bundled_double_hex3_1/convex_hull.npy",
+        "n_edges": 72,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0822,
+        "convex_hull": 0.0642
+      }
+    },
+    {
+      "name": "bundled_square_circle_hole_1",
+      "category": "bundled",
+      "n_points": 826,
+      "points_file": "cases/bundled_square_circle_hole_1/points.npy",
+      "notes": "triangle.get_data('square_circle_hole.1')['vertices']",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/bundled_square_circle_hole_1/delaunay.npy",
+        "n_triangles": 1538,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/bundled_square_circle_hole_1/convex_hull.npy",
+        "n_edges": 112,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.1025,
+        "convex_hull": 0.0741
+      }
+    },
+    {
+      "name": "bundled_A_1",
+      "category": "bundled",
+      "n_points": 29,
+      "points_file": "cases/bundled_A_1/points.npy",
+      "notes": "triangle.get_data('A.1')['vertices']",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/bundled_A_1/delaunay.npy",
+        "n_triangles": 48,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/bundled_A_1/convex_hull.npy",
+        "n_edges": 8,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0147,
+        "convex_hull": 0.0114
+      }
+    },
+    {
+      "name": "bundled_la_1",
+      "category": "bundled",
+      "n_points": 860,
+      "points_file": "cases/bundled_la_1/points.npy",
+      "notes": "triangle.get_data('la.1')['vertices']",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/bundled_la_1/delaunay.npy",
+        "n_triangles": 1566,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/bundled_la_1/convex_hull.npy",
+        "n_edges": 152,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.1949,
+        "convex_hull": 0.1416
+      }
+    },
+    {
+      "name": "bundled_face_1",
+      "category": "bundled",
+      "n_points": 26,
+      "points_file": "cases/bundled_face_1/points.npy",
+      "notes": "triangle.get_data('face.1')['vertices']",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/bundled_face_1/delaunay.npy",
+        "n_triangles": 44,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/bundled_face_1/convex_hull.npy",
+        "n_edges": 6,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0116,
+        "convex_hull": 0.011
+      }
+    },
+    {
+      "name": "random_uniform_s0_n3",
+      "category": "random_uniform",
+      "n_points": 3,
+      "points_file": "cases/random_uniform_s0_n3/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s0_n3/delaunay.npy",
+        "n_triangles": 1,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s0_n3/convex_hull.npy",
+        "n_edges": 3,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0082,
+        "convex_hull": 0.0081
+      }
+    },
+    {
+      "name": "random_uniform_s0_n4",
+      "category": "random_uniform",
+      "n_points": 4,
+      "points_file": "cases/random_uniform_s0_n4/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s0_n4/delaunay.npy",
+        "n_triangles": 3,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s0_n4/convex_hull.npy",
+        "n_edges": 3,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0098,
+        "convex_hull": 0.0092
+      }
+    },
+    {
+      "name": "random_uniform_s0_n5",
+      "category": "random_uniform",
+      "n_points": 5,
+      "points_file": "cases/random_uniform_s0_n5/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s0_n5/delaunay.npy",
+        "n_triangles": 4,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s0_n5/convex_hull.npy",
+        "n_edges": 4,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.008,
+        "convex_hull": 0.009
+      }
+    },
+    {
+      "name": "random_uniform_s0_n10",
+      "category": "random_uniform",
+      "n_points": 10,
+      "points_file": "cases/random_uniform_s0_n10/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s0_n10/delaunay.npy",
+        "n_triangles": 11,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s0_n10/convex_hull.npy",
+        "n_edges": 7,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0083,
+        "convex_hull": 0.0085
+      }
+    },
+    {
+      "name": "random_uniform_s0_n50",
+      "category": "random_uniform",
+      "n_points": 50,
+      "points_file": "cases/random_uniform_s0_n50/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s0_n50/delaunay.npy",
+        "n_triangles": 89,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s0_n50/convex_hull.npy",
+        "n_edges": 9,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0125,
+        "convex_hull": 0.0115
+      }
+    },
+    {
+      "name": "random_uniform_s0_n100",
+      "category": "random_uniform",
+      "n_points": 100,
+      "points_file": "cases/random_uniform_s0_n100/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s0_n100/delaunay.npy",
+        "n_triangles": 185,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s0_n100/convex_hull.npy",
+        "n_edges": 13,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0196,
+        "convex_hull": 0.0172
+      }
+    },
+    {
+      "name": "random_uniform_s0_n1000",
+      "category": "random_uniform",
+      "n_points": 1000,
+      "points_file": "cases/random_uniform_s0_n1000/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s0_n1000/delaunay.npy",
+        "n_triangles": 1985,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s0_n1000/convex_hull.npy",
+        "n_edges": 13,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.1733,
+        "convex_hull": 0.1117
+      }
+    },
+    {
+      "name": "random_uniform_s0_n10000",
+      "category": "random_uniform",
+      "n_points": 10000,
+      "points_file": "cases/random_uniform_s0_n10000/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s0_n10000/delaunay.npy",
+        "n_triangles": 19976,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s0_n10000/convex_hull.npy",
+        "n_edges": 22,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 3.3383,
+        "convex_hull": 2.8826
+      }
+    },
+    {
+      "name": "random_uniform_s0_n50000",
+      "category": "random_uniform",
+      "n_points": 50000,
+      "points_file": "cases/random_uniform_s0_n50000/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s0_n50000/delaunay.npy",
+        "n_triangles": 99971,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s0_n50000/convex_hull.npy",
+        "n_edges": 27,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 16.0308,
+        "convex_hull": 15.8933
+      }
+    },
+    {
+      "name": "random_uniform_s1_n3",
+      "category": "random_uniform",
+      "n_points": 3,
+      "points_file": "cases/random_uniform_s1_n3/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s1_n3/delaunay.npy",
+        "n_triangles": 1,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s1_n3/convex_hull.npy",
+        "n_edges": 3,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.008,
+        "convex_hull": 0.0085
+      }
+    },
+    {
+      "name": "random_uniform_s1_n4",
+      "category": "random_uniform",
+      "n_points": 4,
+      "points_file": "cases/random_uniform_s1_n4/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s1_n4/delaunay.npy",
+        "n_triangles": 2,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s1_n4/convex_hull.npy",
+        "n_edges": 4,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0081,
+        "convex_hull": 0.0083
+      }
+    },
+    {
+      "name": "random_uniform_s1_n5",
+      "category": "random_uniform",
+      "n_points": 5,
+      "points_file": "cases/random_uniform_s1_n5/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s1_n5/delaunay.npy",
+        "n_triangles": 5,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s1_n5/convex_hull.npy",
+        "n_edges": 3,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0089,
+        "convex_hull": 0.0092
+      }
+    },
+    {
+      "name": "random_uniform_s1_n10",
+      "category": "random_uniform",
+      "n_points": 10,
+      "points_file": "cases/random_uniform_s1_n10/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s1_n10/delaunay.npy",
+        "n_triangles": 12,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s1_n10/convex_hull.npy",
+        "n_edges": 6,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0098,
+        "convex_hull": 0.0096
+      }
+    },
+    {
+      "name": "random_uniform_s1_n50",
+      "category": "random_uniform",
+      "n_points": 50,
+      "points_file": "cases/random_uniform_s1_n50/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s1_n50/delaunay.npy",
+        "n_triangles": 86,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s1_n50/convex_hull.npy",
+        "n_edges": 12,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.012,
+        "convex_hull": 0.0113
+      }
+    },
+    {
+      "name": "random_uniform_s1_n100",
+      "category": "random_uniform",
+      "n_points": 100,
+      "points_file": "cases/random_uniform_s1_n100/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s1_n100/delaunay.npy",
+        "n_triangles": 187,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s1_n100/convex_hull.npy",
+        "n_edges": 11,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0168,
+        "convex_hull": 0.0197
+      }
+    },
+    {
+      "name": "random_uniform_s1_n1000",
+      "category": "random_uniform",
+      "n_points": 1000,
+      "points_file": "cases/random_uniform_s1_n1000/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s1_n1000/delaunay.npy",
+        "n_triangles": 1978,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s1_n1000/convex_hull.npy",
+        "n_edges": 20,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.2228,
+        "convex_hull": 0.125
+      }
+    },
+    {
+      "name": "random_uniform_s1_n10000",
+      "category": "random_uniform",
+      "n_points": 10000,
+      "points_file": "cases/random_uniform_s1_n10000/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s1_n10000/delaunay.npy",
+        "n_triangles": 19973,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s1_n10000/convex_hull.npy",
+        "n_edges": 25,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 2.8785,
+        "convex_hull": 2.7643
+      }
+    },
+    {
+      "name": "random_uniform_s1_n50000",
+      "category": "random_uniform",
+      "n_points": 50000,
+      "points_file": "cases/random_uniform_s1_n50000/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s1_n50000/delaunay.npy",
+        "n_triangles": 99972,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s1_n50000/convex_hull.npy",
+        "n_edges": 26,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 15.7526,
+        "convex_hull": 15.7042
+      }
+    },
+    {
+      "name": "random_uniform_s2_n3",
+      "category": "random_uniform",
+      "n_points": 3,
+      "points_file": "cases/random_uniform_s2_n3/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s2_n3/delaunay.npy",
+        "n_triangles": 1,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s2_n3/convex_hull.npy",
+        "n_edges": 3,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0079,
+        "convex_hull": 0.0081
+      }
+    },
+    {
+      "name": "random_uniform_s2_n4",
+      "category": "random_uniform",
+      "n_points": 4,
+      "points_file": "cases/random_uniform_s2_n4/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s2_n4/delaunay.npy",
+        "n_triangles": 3,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s2_n4/convex_hull.npy",
+        "n_edges": 3,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0092,
+        "convex_hull": 0.0085
+      }
+    },
+    {
+      "name": "random_uniform_s2_n5",
+      "category": "random_uniform",
+      "n_points": 5,
+      "points_file": "cases/random_uniform_s2_n5/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s2_n5/delaunay.npy",
+        "n_triangles": 3,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s2_n5/convex_hull.npy",
+        "n_edges": 5,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0091,
+        "convex_hull": 0.0094
+      }
+    },
+    {
+      "name": "random_uniform_s2_n10",
+      "category": "random_uniform",
+      "n_points": 10,
+      "points_file": "cases/random_uniform_s2_n10/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s2_n10/delaunay.npy",
+        "n_triangles": 11,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s2_n10/convex_hull.npy",
+        "n_edges": 7,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0094,
+        "convex_hull": 0.0095
+      }
+    },
+    {
+      "name": "random_uniform_s2_n50",
+      "category": "random_uniform",
+      "n_points": 50,
+      "points_file": "cases/random_uniform_s2_n50/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s2_n50/delaunay.npy",
+        "n_triangles": 88,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s2_n50/convex_hull.npy",
+        "n_edges": 10,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0133,
+        "convex_hull": 0.0126
+      }
+    },
+    {
+      "name": "random_uniform_s2_n100",
+      "category": "random_uniform",
+      "n_points": 100,
+      "points_file": "cases/random_uniform_s2_n100/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s2_n100/delaunay.npy",
+        "n_triangles": 185,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s2_n100/convex_hull.npy",
+        "n_edges": 13,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0159,
+        "convex_hull": 0.0147
+      }
+    },
+    {
+      "name": "random_uniform_s2_n1000",
+      "category": "random_uniform",
+      "n_points": 1000,
+      "points_file": "cases/random_uniform_s2_n1000/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s2_n1000/delaunay.npy",
+        "n_triangles": 1976,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s2_n1000/convex_hull.npy",
+        "n_edges": 22,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.174,
+        "convex_hull": 0.1016
+      }
+    },
+    {
+      "name": "random_uniform_s2_n10000",
+      "category": "random_uniform",
+      "n_points": 10000,
+      "points_file": "cases/random_uniform_s2_n10000/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s2_n10000/delaunay.npy",
+        "n_triangles": 19977,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s2_n10000/convex_hull.npy",
+        "n_edges": 21,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 2.778,
+        "convex_hull": 2.7733
+      }
+    },
+    {
+      "name": "random_uniform_s2_n50000",
+      "category": "random_uniform",
+      "n_points": 50000,
+      "points_file": "cases/random_uniform_s2_n50000/points.npy",
+      "notes": "uniform in unit square",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/random_uniform_s2_n50000/delaunay.npy",
+        "n_triangles": 99974,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/random_uniform_s2_n50000/convex_hull.npy",
+        "n_edges": 24,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 15.6698,
+        "convex_hull": 15.6846
+      }
+    },
+    {
+      "name": "lonlat_global_s0_n100",
+      "category": "lonlat",
+      "n_points": 100,
+      "points_file": "cases/lonlat_global_s0_n100/points.npy",
+      "notes": "global lon[-180,180] x lat[-90,90]",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/lonlat_global_s0_n100/delaunay.npy",
+        "n_triangles": 184,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/lonlat_global_s0_n100/convex_hull.npy",
+        "n_edges": 14,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0149,
+        "convex_hull": 0.0144
+      }
+    },
+    {
+      "name": "lonlat_regional_s0_n100",
+      "category": "lonlat",
+      "n_points": 100,
+      "points_file": "cases/lonlat_regional_s0_n100/points.npy",
+      "notes": "regional lon[-130,-110] x lat[30,45]",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/lonlat_regional_s0_n100/delaunay.npy",
+        "n_triangles": 180,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/lonlat_regional_s0_n100/convex_hull.npy",
+        "n_edges": 18,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0179,
+        "convex_hull": 0.0158
+      }
+    },
+    {
+      "name": "lonlat_global_s0_n1000",
+      "category": "lonlat",
+      "n_points": 1000,
+      "points_file": "cases/lonlat_global_s0_n1000/points.npy",
+      "notes": "global lon[-180,180] x lat[-90,90]",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/lonlat_global_s0_n1000/delaunay.npy",
+        "n_triangles": 1985,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/lonlat_global_s0_n1000/convex_hull.npy",
+        "n_edges": 13,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.1373,
+        "convex_hull": 0.0938
+      }
+    },
+    {
+      "name": "lonlat_regional_s0_n1000",
+      "category": "lonlat",
+      "n_points": 1000,
+      "points_file": "cases/lonlat_regional_s0_n1000/points.npy",
+      "notes": "regional lon[-130,-110] x lat[30,45]",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/lonlat_regional_s0_n1000/delaunay.npy",
+        "n_triangles": 1980,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/lonlat_regional_s0_n1000/convex_hull.npy",
+        "n_edges": 18,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.1682,
+        "convex_hull": 0.1173
+      }
+    },
+    {
+      "name": "lonlat_global_s0_n10000",
+      "category": "lonlat",
+      "n_points": 10000,
+      "points_file": "cases/lonlat_global_s0_n10000/points.npy",
+      "notes": "global lon[-180,180] x lat[-90,90]",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/lonlat_global_s0_n10000/delaunay.npy",
+        "n_triangles": 19969,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/lonlat_global_s0_n10000/convex_hull.npy",
+        "n_edges": 29,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 2.8399,
+        "convex_hull": 2.8001
+      }
+    },
+    {
+      "name": "lonlat_regional_s0_n10000",
+      "category": "lonlat",
+      "n_points": 10000,
+      "points_file": "cases/lonlat_regional_s0_n10000/points.npy",
+      "notes": "regional lon[-130,-110] x lat[30,45]",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/lonlat_regional_s0_n10000/delaunay.npy",
+        "n_triangles": 19968,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/lonlat_regional_s0_n10000/convex_hull.npy",
+        "n_edges": 30,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 2.8622,
+        "convex_hull": 2.8101
+      }
+    },
+    {
+      "name": "lonlat_global_s1_n100",
+      "category": "lonlat",
+      "n_points": 100,
+      "points_file": "cases/lonlat_global_s1_n100/points.npy",
+      "notes": "global lon[-180,180] x lat[-90,90]",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/lonlat_global_s1_n100/delaunay.npy",
+        "n_triangles": 187,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/lonlat_global_s1_n100/convex_hull.npy",
+        "n_edges": 11,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0199,
+        "convex_hull": 0.0181
+      }
+    },
+    {
+      "name": "lonlat_regional_s1_n100",
+      "category": "lonlat",
+      "n_points": 100,
+      "points_file": "cases/lonlat_regional_s1_n100/points.npy",
+      "notes": "regional lon[-130,-110] x lat[30,45]",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/lonlat_regional_s1_n100/delaunay.npy",
+        "n_triangles": 182,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/lonlat_regional_s1_n100/convex_hull.npy",
+        "n_edges": 16,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0199,
+        "convex_hull": 0.0172
+      }
+    },
+    {
+      "name": "lonlat_global_s1_n1000",
+      "category": "lonlat",
+      "n_points": 1000,
+      "points_file": "cases/lonlat_global_s1_n1000/points.npy",
+      "notes": "global lon[-180,180] x lat[-90,90]",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/lonlat_global_s1_n1000/delaunay.npy",
+        "n_triangles": 1982,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/lonlat_global_s1_n1000/convex_hull.npy",
+        "n_edges": 16,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.1563,
+        "convex_hull": 0.1034
+      }
+    },
+    {
+      "name": "lonlat_regional_s1_n1000",
+      "category": "lonlat",
+      "n_points": 1000,
+      "points_file": "cases/lonlat_regional_s1_n1000/points.npy",
+      "notes": "regional lon[-130,-110] x lat[30,45]",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/lonlat_regional_s1_n1000/delaunay.npy",
+        "n_triangles": 1979,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/lonlat_regional_s1_n1000/convex_hull.npy",
+        "n_edges": 19,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.17,
+        "convex_hull": 0.1112
+      }
+    },
+    {
+      "name": "lonlat_global_s1_n10000",
+      "category": "lonlat",
+      "n_points": 10000,
+      "points_file": "cases/lonlat_global_s1_n10000/points.npy",
+      "notes": "global lon[-180,180] x lat[-90,90]",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/lonlat_global_s1_n10000/delaunay.npy",
+        "n_triangles": 19969,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/lonlat_global_s1_n10000/convex_hull.npy",
+        "n_edges": 29,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 2.9432,
+        "convex_hull": 2.7221
+      }
+    },
+    {
+      "name": "lonlat_regional_s1_n10000",
+      "category": "lonlat",
+      "n_points": 10000,
+      "points_file": "cases/lonlat_regional_s1_n10000/points.npy",
+      "notes": "regional lon[-130,-110] x lat[30,45]",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/lonlat_regional_s1_n10000/delaunay.npy",
+        "n_triangles": 19972,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/lonlat_regional_s1_n10000/convex_hull.npy",
+        "n_edges": 26,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 2.7947,
+        "convex_hull": 2.5933
+      }
+    },
+    {
+      "name": "grid_2x2",
+      "category": "grid",
+      "n_points": 4,
+      "points_file": "cases/grid_2x2/points.npy",
+      "notes": "2x2 regular lattice (heavy co-circularity)",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/grid_2x2/delaunay.npy",
+        "n_triangles": 2,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/grid_2x2/convex_hull.npy",
+        "n_edges": 4,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0095,
+        "convex_hull": 0.0101
+      }
+    },
+    {
+      "name": "grid_3x3",
+      "category": "grid",
+      "n_points": 9,
+      "points_file": "cases/grid_3x3/points.npy",
+      "notes": "3x3 regular lattice (heavy co-circularity)",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/grid_3x3/delaunay.npy",
+        "n_triangles": 8,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/grid_3x3/convex_hull.npy",
+        "n_edges": 8,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0105,
+        "convex_hull": 0.0102
+      }
+    },
+    {
+      "name": "grid_5x5",
+      "category": "grid",
+      "n_points": 25,
+      "points_file": "cases/grid_5x5/points.npy",
+      "notes": "5x5 regular lattice (heavy co-circularity)",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/grid_5x5/delaunay.npy",
+        "n_triangles": 32,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/grid_5x5/convex_hull.npy",
+        "n_edges": 16,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.011,
+        "convex_hull": 0.0108
+      }
+    },
+    {
+      "name": "grid_10x10",
+      "category": "grid",
+      "n_points": 100,
+      "points_file": "cases/grid_10x10/points.npy",
+      "notes": "10x10 regular lattice (heavy co-circularity)",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/grid_10x10/delaunay.npy",
+        "n_triangles": 162,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/grid_10x10/convex_hull.npy",
+        "n_edges": 36,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0256,
+        "convex_hull": 0.0239
+      }
+    },
+    {
+      "name": "grid_30x30",
+      "category": "grid",
+      "n_points": 900,
+      "points_file": "cases/grid_30x30/points.npy",
+      "notes": "30x30 regular lattice (heavy co-circularity)",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/grid_30x30/delaunay.npy",
+        "n_triangles": 1682,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/grid_30x30/convex_hull.npy",
+        "n_edges": 116,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.3096,
+        "convex_hull": 0.1577
+      }
+    },
+    {
+      "name": "circle_k3",
+      "category": "circle",
+      "n_points": 3,
+      "points_file": "cases/circle_k3/points.npy",
+      "notes": "3 points exactly on a circle (co-circular)",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/circle_k3/delaunay.npy",
+        "n_triangles": 1,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/circle_k3/convex_hull.npy",
+        "n_edges": 3,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0093,
+        "convex_hull": 0.0094
+      }
+    },
+    {
+      "name": "circle_k4",
+      "category": "circle",
+      "n_points": 4,
+      "points_file": "cases/circle_k4/points.npy",
+      "notes": "4 points exactly on a circle (co-circular)",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/circle_k4/delaunay.npy",
+        "n_triangles": 2,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/circle_k4/convex_hull.npy",
+        "n_edges": 4,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0126,
+        "convex_hull": 0.0104
+      }
+    },
+    {
+      "name": "circle_k8",
+      "category": "circle",
+      "n_points": 8,
+      "points_file": "cases/circle_k8/points.npy",
+      "notes": "8 points exactly on a circle (co-circular)",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/circle_k8/delaunay.npy",
+        "n_triangles": 6,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/circle_k8/convex_hull.npy",
+        "n_edges": 8,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0127,
+        "convex_hull": 0.0115
+      }
+    },
+    {
+      "name": "circle_k16",
+      "category": "circle",
+      "n_points": 16,
+      "points_file": "cases/circle_k16/points.npy",
+      "notes": "16 points exactly on a circle (co-circular)",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/circle_k16/delaunay.npy",
+        "n_triangles": 14,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/circle_k16/convex_hull.npy",
+        "n_edges": 16,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0172,
+        "convex_hull": 0.0159
+      }
+    },
+    {
+      "name": "circle_k64",
+      "category": "circle",
+      "n_points": 64,
+      "points_file": "cases/circle_k64/points.npy",
+      "notes": "64 points exactly on a circle (co-circular)",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/circle_k64/delaunay.npy",
+        "n_triangles": 62,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/circle_k64/convex_hull.npy",
+        "n_edges": 64,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0713,
+        "convex_hull": 0.0463
+      }
+    },
+    {
+      "name": "circle_concentric_rings",
+      "category": "circle",
+      "n_points": 56,
+      "points_file": "cases/circle_concentric_rings/points.npy",
+      "notes": "concentric rings of co-circular points",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/circle_concentric_rings/delaunay.npy",
+        "n_triangles": 78,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/circle_concentric_rings/convex_hull.npy",
+        "n_edges": 32,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0201,
+        "convex_hull": 0.0178
+      }
+    },
+    {
+      "name": "shapes_regular_polygon_5",
+      "category": "shapes",
+      "n_points": 5,
+      "points_file": "cases/shapes_regular_polygon_5/points.npy",
+      "notes": "regular 5-gon",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/shapes_regular_polygon_5/delaunay.npy",
+        "n_triangles": 3,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/shapes_regular_polygon_5/convex_hull.npy",
+        "n_edges": 5,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0103,
+        "convex_hull": 0.0105
+      }
+    },
+    {
+      "name": "shapes_regular_polygon_6",
+      "category": "shapes",
+      "n_points": 6,
+      "points_file": "cases/shapes_regular_polygon_6/points.npy",
+      "notes": "regular 6-gon",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/shapes_regular_polygon_6/delaunay.npy",
+        "n_triangles": 4,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/shapes_regular_polygon_6/convex_hull.npy",
+        "n_edges": 6,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0104,
+        "convex_hull": 0.0107
+      }
+    },
+    {
+      "name": "shapes_regular_polygon_8",
+      "category": "shapes",
+      "n_points": 8,
+      "points_file": "cases/shapes_regular_polygon_8/points.npy",
+      "notes": "regular 8-gon",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/shapes_regular_polygon_8/delaunay.npy",
+        "n_triangles": 6,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/shapes_regular_polygon_8/convex_hull.npy",
+        "n_edges": 8,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0112,
+        "convex_hull": 0.0106
+      }
+    },
+    {
+      "name": "shapes_regular_polygon_12",
+      "category": "shapes",
+      "n_points": 12,
+      "points_file": "cases/shapes_regular_polygon_12/points.npy",
+      "notes": "regular 12-gon",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/shapes_regular_polygon_12/delaunay.npy",
+        "n_triangles": 10,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/shapes_regular_polygon_12/convex_hull.npy",
+        "n_edges": 12,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0197,
+        "convex_hull": 0.0134
+      }
+    },
+    {
+      "name": "shapes_plus_cross",
+      "category": "shapes",
+      "n_points": 9,
+      "points_file": "cases/shapes_plus_cross/points.npy",
+      "notes": "plus/cross arrangement",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/shapes_plus_cross/delaunay.npy",
+        "n_triangles": 12,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/shapes_plus_cross/convex_hull.npy",
+        "n_edges": 4,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0091,
+        "convex_hull": 0.0096
+      }
+    },
+    {
+      "name": "shapes_cluster_with_outlier",
+      "category": "shapes",
+      "n_points": 41,
+      "points_file": "cases/shapes_cluster_with_outlier/points.npy",
+      "notes": "tight cluster plus a far outlier",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/shapes_cluster_with_outlier/delaunay.npy",
+        "n_triangles": 74,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/shapes_cluster_with_outlier/convex_hull.npy",
+        "n_edges": 6,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.013,
+        "convex_hull": 0.0125
+      }
+    },
+    {
+      "name": "shapes_two_clusters",
+      "category": "shapes",
+      "n_points": 60,
+      "points_file": "cases/shapes_two_clusters/points.npy",
+      "notes": "two tight, well-separated clusters",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/shapes_two_clusters/delaunay.npy",
+        "n_triangles": 109,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/shapes_two_clusters/convex_hull.npy",
+        "n_edges": 9,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0143,
+        "convex_hull": 0.0138
+      }
+    },
+    {
+      "name": "coord_stress_huge",
+      "category": "coord_stress",
+      "n_points": 50,
+      "points_file": "cases/coord_stress_huge/points.npy",
+      "notes": "very large coordinates (~1e8)",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/coord_stress_huge/delaunay.npy",
+        "n_triangles": 88,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/coord_stress_huge/convex_hull.npy",
+        "n_edges": 10,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0122,
+        "convex_hull": 0.0115
+      }
+    },
+    {
+      "name": "coord_stress_tiny",
+      "category": "coord_stress",
+      "n_points": 50,
+      "points_file": "cases/coord_stress_tiny/points.npy",
+      "notes": "very small coordinates (~1e-8)",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/coord_stress_tiny/delaunay.npy",
+        "n_triangles": 88,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/coord_stress_tiny/convex_hull.npy",
+        "n_edges": 10,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0126,
+        "convex_hull": 0.0117
+      }
+    },
+    {
+      "name": "coord_stress_mixed_magnitude",
+      "category": "coord_stress",
+      "n_points": 50,
+      "points_file": "cases/coord_stress_mixed_magnitude/points.npy",
+      "notes": "mixed magnitude per axis",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/coord_stress_mixed_magnitude/delaunay.npy",
+        "n_triangles": 88,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/coord_stress_mixed_magnitude/convex_hull.npy",
+        "n_edges": 10,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0212,
+        "convex_hull": 0.0157
+      }
+    },
+    {
+      "name": "coord_stress_negative_quadrant",
+      "category": "coord_stress",
+      "n_points": 50,
+      "points_file": "cases/coord_stress_negative_quadrant/points.npy",
+      "notes": "all-negative quadrant",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/coord_stress_negative_quadrant/delaunay.npy",
+        "n_triangles": 88,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/coord_stress_negative_quadrant/convex_hull.npy",
+        "n_edges": 10,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0147,
+        "convex_hull": 0.0135
+      }
+    },
+    {
+      "name": "coord_stress_high_dynamic_range",
+      "category": "coord_stress",
+      "n_points": 100,
+      "points_file": "cases/coord_stress_high_dynamic_range/points.npy",
+      "notes": "points spanning a huge dynamic range",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/coord_stress_high_dynamic_range/delaunay.npy",
+        "n_triangles": 186,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/coord_stress_high_dynamic_range/convex_hull.npy",
+        "n_edges": 12,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0181,
+        "convex_hull": 0.0166
+      }
+    },
+    {
+      "name": "degenerate_3_collinear",
+      "category": "degenerate",
+      "n_points": 3,
+      "points_file": "cases/degenerate_3_collinear/points.npy",
+      "notes": "3 collinear points (delaunay->KeyError, convex_hull->segfault)",
+      "delaunay": {
+        "status": "error",
+        "file": null,
+        "n_triangles": null,
+        "error_type": "KeyError",
+        "error_msg": "'trianglelist'"
+      },
+      "convex_hull": {
+        "status": "segfault",
+        "file": null,
+        "n_edges": null,
+        "error_type": "segfault",
+        "error_msg": "killed by signal 11"
+      },
+      "reference_timings_ms": {
+        "delaunay": null,
+        "convex_hull": null
+      }
+    },
+    {
+      "name": "degenerate_n_collinear",
+      "category": "degenerate",
+      "n_points": 8,
+      "points_file": "cases/degenerate_n_collinear/points.npy",
+      "notes": "N collinear points (delaunay->KeyError, convex_hull->segfault)",
+      "delaunay": {
+        "status": "error",
+        "file": null,
+        "n_triangles": null,
+        "error_type": "KeyError",
+        "error_msg": "'trianglelist'"
+      },
+      "convex_hull": {
+        "status": "segfault",
+        "file": null,
+        "n_edges": null,
+        "error_type": "segfault",
+        "error_msg": "killed by signal 11"
+      },
+      "reference_timings_ms": {
+        "delaunay": null,
+        "convex_hull": null
+      }
+    },
+    {
+      "name": "degenerate_all_duplicate",
+      "category": "degenerate",
+      "n_points": 5,
+      "points_file": "cases/degenerate_all_duplicate/points.npy",
+      "notes": "5 copies of one point",
+      "delaunay": {
+        "status": "segfault",
+        "file": null,
+        "n_triangles": null,
+        "error_type": "segfault",
+        "error_msg": "killed by signal 11"
+      },
+      "convex_hull": {
+        "status": "segfault",
+        "file": null,
+        "n_edges": null,
+        "error_type": "segfault",
+        "error_msg": "killed by signal 11"
+      },
+      "reference_timings_ms": {
+        "delaunay": null,
+        "convex_hull": null
+      }
+    },
+    {
+      "name": "degenerate_duplicates_mixed",
+      "category": "degenerate",
+      "n_points": 7,
+      "points_file": "cases/degenerate_duplicates_mixed/points.npy",
+      "notes": "valid points plus a duplicate of one",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/degenerate_duplicates_mixed/delaunay.npy",
+        "n_triangles": 6,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/degenerate_duplicates_mixed/convex_hull.npy",
+        "n_edges": 4,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0093,
+        "convex_hull": 0.0093
+      }
+    },
+    {
+      "name": "degenerate_2_points",
+      "category": "degenerate",
+      "n_points": 2,
+      "points_file": "cases/degenerate_2_points/points.npy",
+      "notes": "2 points -> ValueError",
+      "delaunay": {
+        "status": "error",
+        "file": null,
+        "n_triangles": null,
+        "error_type": "ValueError",
+        "error_msg": "Input must have at least three vertices."
+      },
+      "convex_hull": {
+        "status": "error",
+        "file": null,
+        "n_edges": null,
+        "error_type": "ValueError",
+        "error_msg": "Input must have at least three vertices."
+      },
+      "reference_timings_ms": {
+        "delaunay": null,
+        "convex_hull": null
+      }
+    },
+    {
+      "name": "degenerate_0_points",
+      "category": "degenerate",
+      "n_points": 0,
+      "points_file": "cases/degenerate_0_points/points.npy",
+      "notes": "0 points -> ValueError",
+      "delaunay": {
+        "status": "error",
+        "file": null,
+        "n_triangles": null,
+        "error_type": "ValueError",
+        "error_msg": "Input must have at least three vertices."
+      },
+      "convex_hull": {
+        "status": "error",
+        "file": null,
+        "n_edges": null,
+        "error_type": "ValueError",
+        "error_msg": "Input must have at least three vertices."
+      },
+      "reference_timings_ms": {
+        "delaunay": null,
+        "convex_hull": null
+      }
+    },
+    {
+      "name": "degenerate_exactly_3",
+      "category": "degenerate",
+      "n_points": 3,
+      "points_file": "cases/degenerate_exactly_3/points.npy",
+      "notes": "minimal valid triangle",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/degenerate_exactly_3/delaunay.npy",
+        "n_triangles": 1,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/degenerate_exactly_3/convex_hull.npy",
+        "n_edges": 3,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0093,
+        "convex_hull": 0.0094
+      }
+    },
+    {
+      "name": "degenerate_nearly_collinear",
+      "category": "degenerate",
+      "n_points": 5,
+      "points_file": "cases/degenerate_nearly_collinear/points.npy",
+      "notes": "points perturbed off a line by ~1e-9",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/degenerate_nearly_collinear/delaunay.npy",
+        "n_triangles": 3,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/degenerate_nearly_collinear/convex_hull.npy",
+        "n_edges": 5,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0096,
+        "convex_hull": 0.0096
+      }
+    },
+    {
+      "name": "degenerate_nearly_duplicate",
+      "category": "degenerate",
+      "n_points": 4,
+      "points_file": "cases/degenerate_nearly_duplicate/points.npy",
+      "notes": "one point a tiny perturbation away from another",
+      "delaunay": {
+        "status": "ok",
+        "file": "cases/degenerate_nearly_duplicate/delaunay.npy",
+        "n_triangles": 3,
+        "error_type": null,
+        "error_msg": null
+      },
+      "convex_hull": {
+        "status": "ok",
+        "file": "cases/degenerate_nearly_duplicate/convex_hull.npy",
+        "n_edges": 3,
+        "error_type": null,
+        "error_msg": null
+      },
+      "reference_timings_ms": {
+        "delaunay": 0.0081,
+        "convex_hull": 0.0081
+      }
+    }
+  ]
+}

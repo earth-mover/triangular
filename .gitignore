@@ -1,0 +1,12 @@
+/target/
+*.so
+*.pyd
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+*.egg-info/
+build/
+dist/
+.maturin/
