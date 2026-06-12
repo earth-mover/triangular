@@ -77,3 +77,19 @@ clippy on Rust:
 uv run pre-commit install
 uv run pre-commit run --all-files
 ```
+
+## Releasing
+
+Versions live in git tags only — `pyproject.toml` stays pinned at the `0.0.0` placeholder
+and is never edited for a release. To ship:
+
+```bash
+gh release create v0.3.0 --generate-notes
+```
+
+Publishing the GitHub release triggers `.github/workflows/release.yml`, which stamps the
+version from the tag into `pyproject.toml`, builds wheels (linux x86_64/aarch64, macOS
+universal2, windows x64 — all `abi3-py312`, one wheel per platform) plus an sdist, smoke
+tests each wheel, and publishes to PyPI via trusted publishing. Tags must match
+`vX.Y.Z` (optionally `aN`/`bN`/`rcN` suffixed); anything else fails the stamp step before
+a build starts.
