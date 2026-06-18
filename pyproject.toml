@@ -12,6 +12,11 @@ license = { text = "MIT" }
 authors = [{ name = "Samantha Hughes", email = "samantha@earthmover.io" }]
 dependencies = ["numpy>=1.23"]
 
+[project.urls]
+Homepage = "https://github.com/earth-mover/triangular"
+Repository = "https://github.com/earth-mover/triangular.git"
+Issues = "https://github.com/earth-mover/triangular/issues"
+
 [dependency-groups]
 dev = [
     "pytest>=7",
