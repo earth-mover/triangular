@@ -4,12 +4,16 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "_triangular"
-crate-type = ["cdylib"]
+name = "triangular"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["python"]
+python = ["dep:pyo3", "dep:numpy"]
 
 [dependencies]
-pyo3 = { version = "0.27", features = ["extension-module", "abi3-py312"] }
-numpy = "0.27"
+pyo3 = { version = "0.27", features = ["extension-module", "abi3-py312"], optional = true }
+numpy = { version = "0.27", optional = true }
 robust = "1.1"
 rayon = "1"
 

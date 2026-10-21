@@ -7,13 +7,19 @@
     clippy::cast_possible_wrap
 )]
 
+#[cfg(feature = "python")]
 use numpy::ndarray::Array2;
+#[cfg(feature = "python")]
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
+#[cfg(feature = "python")]
 use pyo3::exceptions::PyValueError;
+#[cfg(feature = "python")]
 use pyo3::types::{PyModule, PyModuleMethods};
+#[cfg(feature = "python")]
 use pyo3::{pyfunction, pymodule, wrap_pyfunction, Bound, PyResult, Python};
 use rayon::prelude::*;
 use robust::{incircle, orient2d, Coord};
+#[cfg(feature = "python")]
 use std::borrow::Cow;
 
 const EMPTY: u32 = u32::MAX;
@@ -32,7 +38,7 @@ const ICC_ERRBOUND_A: f64 = (10.0 + 96.0 * PRED_EPSILON) * PRED_EPSILON;
 
 type StripResult = (Vec<u32>, Vec<u32>, u32, u32);
 
-type Pt = [f64; 2];
+pub type Pt = [f64; 2];
 
 #[inline]
 fn co(p: Pt) -> Coord<f64> {
@@ -477,7 +483,8 @@ impl Sweep<'_> {
     }
 }
 
-fn triangulate(pts: &[Pt]) -> Vec<u32> {
+#[must_use]
+pub fn triangulate(pts: &[Pt]) -> Vec<u32> {
     if pts.len() >= PARALLEL_MIN_N {
         if let Some(tris) = triangulate_parallel(pts) {
             return tris;
@@ -1030,10 +1037,12 @@ fn longitude_grid_hull_edges(pts: &[Pt]) -> Option<Vec<[i32; 2]>> {
     )
 }
 
-fn hull_edges(pts: &[Pt]) -> Vec<[i32; 2]> {
+#[must_use]
+pub fn hull_edges(pts: &[Pt]) -> Vec<[i32; 2]> {
     longitude_grid_hull_edges(pts).unwrap_or_else(|| hull_edges_full(pts))
 }
 
+#[cfg(feature = "python")]
 fn collect_xy<'a>(points: &'a PyReadonlyArray2<'_, f64>) -> Cow<'a, [Pt]> {
     points.as_slice().map_or_else(
         |_| {
@@ -1054,6 +1063,7 @@ fn collect_xy<'a>(points: &'a PyReadonlyArray2<'_, f64>) -> Cow<'a, [Pt]> {
     )
 }
 
+#[cfg(feature = "python")]
 fn into_index_array(
     py: Python<'_>,
     rows: usize,
@@ -1065,6 +1075,7 @@ fn into_index_array(
         .map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
+#[cfg(feature = "python")]
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 fn delaunay<'py>(
@@ -1078,6 +1089,7 @@ fn delaunay<'py>(
     into_index_array(py, rows, 3, data)
 }
 
+#[cfg(feature = "python")]
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 fn convex_hull<'py>(
@@ -1091,9 +1103,34 @@ fn convex_hull<'py>(
     into_index_array(py, rows, 2, data)
 }
 
+#[cfg(feature = "python")]
 #[pymodule]
 fn _triangular(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(delaunay, m)?)?;
     m.add_function(wrap_pyfunction!(convex_hull, m)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{hull_edges, triangulate};
+
+    const PTS: [[f64; 2]; 5] = [[0.0, 0.0], [0.0, 1.0], [0.5, 0.5], [1.0, 1.0], [1.0, 0.0]];
+
+    #[test]
+    fn triangulates_readme_example() {
+        let tris = triangulate(&PTS);
+        assert_eq!(tris.len(), 4 * 3);
+        assert!(tris.chunks(3).all(|t| t.contains(&2)));
+    }
+
+    #[test]
+    fn hulls_readme_example() {
+        let mut edges: Vec<[i32; 2]> = hull_edges(&PTS)
+            .into_iter()
+            .map(|[a, b]| [a.min(b), a.max(b)])
+            .collect();
+        edges.sort_unstable();
+        assert_eq!(edges, vec![[0, 1], [0, 4], [1, 3], [3, 4]]);
+    }
 }
