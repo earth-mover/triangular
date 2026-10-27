@@ -10,8 +10,8 @@ import triangular
 
 pts = np.array([[0, 0], [0, 1], [0.5, 0.5], [1, 1], [1, 0]], dtype=float)
 
-triangular.delaunay(pts)      # -> int32 (M, 3): 0-based vertex-index triples
-triangular.convex_hull(pts)   # -> int32 (K, 2): 0-based hull edge vertex pairs
+triangular.delaunay(pts)  # -> int32 (M, 3): 0-based vertex-index triples
+triangular.convex_hull(pts)  # -> int32 (K, 2): 0-based hull edge vertex pairs
 ```
 
 These correspond to `triangle.delaunay` (Triangle options `Qz`) and `triangle.convex_hull`
