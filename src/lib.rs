@@ -485,7 +485,7 @@ impl Sweep<'_> {
         self.hull_prev[nxt as usize] = i;
         self.hull_next[i as usize] = nxt;
 
-        self.hash_set(p, i);
+        self.hull_hash[key] = i;
         let pe = self.pts[e as usize];
         self.hash_set(pe, e);
     }
