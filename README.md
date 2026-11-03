@@ -42,6 +42,9 @@ uv run pytest
 `uv sync` builds the native module via [maturin](https://www.maturin.rs/); after changing
 the Rust code, rebuild with `uv sync --reinstall-package triangular`.
 
+`just` lists the tasks. `just ci` runs format, lint and the Rust and Python tests, as CI
+does. `just check-deps` runs `cargo deny`.
+
 The suite can also run against the real `triangle` library, to check that the corpus and
 invariant tests are themselves correct:
 
