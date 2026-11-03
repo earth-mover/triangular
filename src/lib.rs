@@ -34,7 +34,11 @@ const STRIP_TARGET_PTS: usize = 4096;
 // A planar graph on k sites has at most 3k edges, so 3 quad edges per site never run out.
 const QUAD_SLOTS: usize = 12;
 const BUCKETS_PER_STRIP: usize = 16;
-const AXIS_SAMPLE: usize = 4096;
+const PLAN_SAMPLE_DIV: usize = 64;
+const PLAN_SAMPLE_MIN: usize = 256;
+const PLAN_SAMPLE_MAX: usize = 1024;
+// One interior point can make a fan that each merge level rebuilds, so near-convex input runs the sweep.
+const CONVEX_MAX_INTERIOR_DIV: usize = 256;
 const GRID_COLUMN_MIN_PTS: usize = 128;
 // Uniform input flips about 3 times per point. Rows of collinear points flip 30 or more times,
 // and divide and conquer is faster on them.
@@ -251,7 +255,7 @@ fn argmin(idx: impl Iterator<Item = usize>, key: impl Fn(usize) -> f64) -> Optio
     best.map(|(_, i)| i)
 }
 
-fn find_seed(pts: &[Pt]) -> Option<(usize, usize, usize)> {
+fn find_seed(pts: &[Pt], hint: Option<Pt>) -> Option<(usize, usize, usize)> {
     let n = pts.len();
 
     let (mut minx, mut miny, mut maxx, mut maxy) = (
@@ -266,9 +270,9 @@ fn find_seed(pts: &[Pt]) -> Option<(usize, usize, usize)> {
         maxx = maxx.max(x);
         maxy = maxy.max(y);
     }
-    let bbox_center = [f64::midpoint(minx, maxx), f64::midpoint(miny, maxy)];
+    let anchor = hint.unwrap_or([f64::midpoint(minx, maxx), f64::midpoint(miny, maxy)]);
 
-    let i0 = argmin(0..n, |i| dist2(bbox_center, pts[i]))?;
+    let i0 = argmin(0..n, |i| dist2(anchor, pts[i]))?;
     let p0 = pts[i0];
 
     let i1 = argmin(
@@ -314,6 +318,7 @@ struct Sweep<'a> {
     edge_stack: Vec<u32>,
     flips: usize,
     max_flips: usize,
+    strict: bool,
 }
 
 impl Sweep<'_> {
@@ -427,15 +432,15 @@ impl Sweep<'_> {
             if i > 0 && same_point(self.pts[i - 1], self.pts[i]) {
                 continue;
             }
-            self.insert(i as u32);
-            if self.flips > self.max_flips {
+            // A dropped vertex ties in distance with the hull. A strict caller then uses divide and conquer.
+            if (!self.insert(i as u32) && self.strict) || self.flips > self.max_flips {
                 return false;
             }
         }
         true
     }
 
-    fn insert(&mut self, i: u32) {
+    fn insert(&mut self, i: u32) -> bool {
         let p = self.pts[i as usize];
 
         let key = self.hash_key(p);
@@ -453,7 +458,7 @@ impl Sweep<'_> {
         while !self.visible(e, en, p) {
             e = en;
             if e == start {
-                return;
+                return false;
             }
             en = self.hull_next[e as usize];
         }
@@ -510,6 +515,7 @@ impl Sweep<'_> {
         self.hull_hash[key] = i;
         let pe = self.pts[e as usize];
         self.hash_set(pe, e);
+        true
     }
 }
 
@@ -572,11 +578,29 @@ fn sorted_sites(pts: &[Pt]) -> Sites {
     let nstrips = strip_count(m);
     let spts: Vec<Pt> = keyed.par_iter().map(key_point).collect();
     let ids: Vec<u32> = keyed.par_iter().map(|k| k.2).collect();
-    let ranges = (0..nstrips)
-        .map(|s| (s * m / nstrips, (s + 1) * m / nstrips))
+    let cuts: Vec<usize> = std::iter::once(0)
+        .chain((1..nstrips).map(|s| snap_to_gap(&spts, s * m / nstrips, m / nstrips / 8)))
+        .chain(std::iter::once(m))
+        .collect();
+    let ranges = cuts
+        .windows(2)
+        .map(|w| (w[0], w[1]))
         .filter(|&(lo, hi)| hi > lo)
         .collect();
     (spts, ids, ranges)
+}
+
+// A rank cut can leave the tail of a dense cluster in a strip of far sparse sites. There the tail
+// ties in sweep distance, and the strip falls back to divide and conquer. Cut at the widest x gap.
+fn snap_to_gap(spts: &[Pt], cut: usize, window: usize) -> usize {
+    (cut - window..=cut + window)
+        .max_by(|&a, &b| {
+            let gap = |i: usize| spts[i][0] - spts[i - 1][0];
+            gap(a)
+                .total_cmp(&gap(b))
+                .then(b.abs_diff(cut).cmp(&a.abs_diff(cut)))
+        })
+        .unwrap_or(cut)
 }
 
 #[derive(Clone, Copy)]
@@ -662,7 +686,9 @@ fn bucket_plan(pts: &[Pt], nstrips: usize) -> Option<BucketPlan> {
             *s = (*s).min(last as u32);
         }
     }
-    if sizes.len() < 2 || sizes.iter().any(|&k| k > 4 * target) {
+    // A strip larger than half a thread's share sets the critical path.
+    let cap = (4 * target).min(target + n / (2 * rayon::current_num_threads()));
+    if sizes.len() < 2 || sizes.iter().any(|&k| k > cap) {
         return None;
     }
     Some(BucketPlan {
@@ -732,32 +758,96 @@ fn bucketed_sites(pts: &[Pt], nstrips: usize) -> Option<Sites> {
     Some((spts, ids, ranges))
 }
 
-// Strips are cut across x, so on tall input they become slivers and merge seams cross most sites.
-// Mirror such input across y = x first.
 fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
-    if !taller_than_wide(pts) {
-        return triangulate_strips(pts);
+    match cut_plan(pts) {
+        Cut::Seq => None,
+        Cut::X => triangulate_strips(pts),
+        Cut::Y => {
+            let mirrored: Vec<Pt> = pts.par_iter().map(|&[x, y]| [y, x]).collect();
+            let mut tris = triangulate_strips(&mirrored)?;
+            // The mirror reverses orientation, and predicates negate exactly under it, so a swap restores CCW.
+            tris.par_chunks_mut(3).for_each(|t| t.swap(1, 2));
+            Some(tris)
+        }
     }
-    let mirrored: Vec<Pt> = pts.par_iter().map(|&[x, y]| [y, x]).collect();
-    let mut tris = triangulate_strips(&mirrored)?;
-    // The mirror reverses orientation, and predicates negate exactly under it, so a swap restores CCW.
-    tris.par_chunks_mut(3).for_each(|t| t.swap(1, 2));
-    Some(tris)
 }
 
-// Use interdecile spans of a strided sample, so that a few outliers do not set the cut axis.
-fn taller_than_wide(pts: &[Pt]) -> bool {
-    let step = (pts.len() / AXIS_SAMPLE).max(1);
-    let (mut xs, mut ys): (Vec<f64>, Vec<f64>) =
-        pts.iter().step_by(step).map(|p| (p[0], p[1])).unzip();
-    interdecile_span(&mut ys) > interdecile_span(&mut xs)
+enum Cut {
+    Seq,
+    X,
+    Y,
 }
 
-fn interdecile_span(v: &mut [f64]) -> f64 {
-    let k = v.len() / 10;
-    let hi = *v.select_nth_unstable_by(v.len() - 1 - k, f64::total_cmp).1;
-    let lo = *v.select_nth_unstable_by(k, f64::total_cmp).1;
-    hi - lo
+// A seam cut along a dense thin feature crosses most of its sites. Count the sample edges
+// that cross x and y strip seams, and cut across the axis with fewer crossings.
+fn cut_plan(pts: &[Pt]) -> Cut {
+    let sample = plan_sample(pts);
+    let s = sample.len();
+    let Some((tri, half, x_rank)) = sweep(&sample, Some(STRIP_MAX_FLIPS_PER_PT * s), None) else {
+        return Cut::X;
+    };
+    let hull = half.iter().filter(|&&h| h == EMPTY).count();
+    // Euler's formula gives the vertex count of a triangulation from its triangle and hull counts.
+    let v = (tri.len() / 3 + hull + 2) / 2;
+    if (v - hull.min(v)) * CONVEX_MAX_INTERIOR_DIV <= v {
+        return Cut::Seq;
+    }
+    let mut by_y: Vec<u32> = (0..s as u32).collect();
+    by_y.sort_unstable_by_key(|&i| {
+        let p = sample[i as usize];
+        (total_order_key(p[1]), total_order_key(p[0]))
+    });
+    let mut y_rank = vec![0u32; s];
+    for (r, &i) in by_y.iter().enumerate() {
+        y_rank[i as usize] = r as u32;
+    }
+    let k = strip_count(pts.len()).clamp(2, (s / 16).max(2));
+    let strip = |r: u32| r as usize * k / s;
+    let (mut cross_x, mut cross_y) = (0usize, 0usize);
+    for h in 0..tri.len() {
+        if half[h] != EMPTY && half[h] < h as u32 {
+            continue;
+        }
+        // The sample is sorted, so a sweep position maps through `x_rank` to its x order.
+        let a = x_rank[tri[h] as usize];
+        let b = x_rank[tri[next_he(h)] as usize];
+        cross_x += strip(a).abs_diff(strip(b));
+        cross_y += strip(y_rank[a as usize]).abs_diff(strip(y_rank[b as usize]));
+    }
+    if 4 * cross_y < 3 * cross_x {
+        return Cut::Y;
+    }
+    if 4 * cross_x < 3 * cross_y {
+        return Cut::X;
+    }
+    // When seams do not decide, cut across the longer side so that strip leaves stay near square.
+    let x_span = sample[s - 1 - s / 10][0] - sample[s / 10][0];
+    let y_span = sample[by_y[s - 1 - s / 10] as usize][1] - sample[by_y[s / 10] as usize][1];
+    if y_span > x_span {
+        Cut::Y
+    } else {
+        Cut::X
+    }
+}
+
+#[inline]
+fn splitmix(mut z: u64) -> u64 {
+    z = z.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+// Hashed indices, unlike a stride, cannot line up with a period in the input order.
+fn plan_sample(pts: &[Pt]) -> Vec<Pt> {
+    let n = pts.len();
+    let s = (n / PLAN_SAMPLE_DIV).clamp(PLAN_SAMPLE_MIN, PLAN_SAMPLE_MAX);
+    let mut sample: Vec<Pt> = (0..s as u64)
+        .map(|j| pts[(splitmix(j) % n as u64) as usize])
+        .collect();
+    sample.sort_unstable_by_key(|&p| (total_order_key(p[0]), total_order_key(p[1])));
+    sample.dedup_by(|a, b| same_point(*a, *b));
+    sample
 }
 
 fn triangulate_strips(pts: &[Pt]) -> Option<Vec<u32>> {
@@ -865,7 +955,7 @@ fn strip_count(m: usize) -> usize {
 }
 
 fn triangulate_seq(pts: &[Pt]) -> Vec<u32> {
-    let Some((mut tris, _, perm)) = sweep(pts, usize::MAX) else {
+    let Some((mut tris, _, perm)) = sweep(pts, None, None) else {
         return Vec::new();
     };
     for t in &mut tris {
@@ -883,7 +973,12 @@ fn sweep_strip(
     base: u32,
 ) -> Option<Built> {
     let k = hi - lo;
-    let (tri, half, perm) = sweep(&spts[lo..hi], STRIP_MAX_FLIPS_PER_PT * k)?;
+    let strip = &spts[lo..hi];
+    let (tri, half, perm) = sweep(
+        strip,
+        Some(STRIP_MAX_FLIPS_PER_PT * k),
+        cluster_anchor(strip),
+    )?;
     let global = |l: u32| lo as u32 + perm[l as usize];
 
     let nh = tri.len();
@@ -955,6 +1050,25 @@ fn sweep_strip(
     })
 }
 
+// A bbox center outside the middle half of the sites misses their dense part. The dense part then
+// ties in sweep distance and shares one hull hash bucket, so the sweep starts at the medians instead.
+fn cluster_anchor(strip: &[Pt]) -> Option<Pt> {
+    let k = strip.len();
+    let mut ys: Vec<f64> = strip.iter().map(|p| p[1]).collect();
+    let (lo, &mut y_mid, hi) = ys.select_nth_unstable_by(k / 2, f64::total_cmp);
+    let y_q1 = *lo.select_nth_unstable_by(k / 4, f64::total_cmp).1;
+    let y_q3 = *hi.select_nth_unstable_by(hi.len() / 2, f64::total_cmp).1;
+    let (y_min, y_max) = (
+        lo.iter().fold(y_q1, |m, &y| m.min(y)),
+        hi.iter().fold(y_q3, |m, &y| m.max(y)),
+    );
+    let x_center = f64::midpoint(strip[0][0], strip[k - 1][0]);
+    let y_center = f64::midpoint(y_min, y_max);
+    let inside = (strip[k / 4][0]..=strip[3 * k / 4][0]).contains(&x_center)
+        && (y_q1..=y_q3).contains(&y_center);
+    (!inside).then(|| [strip[k / 2][0], y_mid])
+}
+
 // Bucket order is monotone in distance, so sorting each bucket gives the order of one full sort.
 fn sort_by_distance(pts: &[Pt], center: Pt) -> Vec<u32> {
     let cmp = |&(ka, a): &(i64, u32), &(kb, b): &(i64, u32)| {
@@ -999,13 +1113,18 @@ fn sort_by_distance(pts: &[Pt], center: Pt) -> Vec<u32> {
 }
 
 // Returns the triangles and halfedges over positions in `perm`, which maps them to indices of `pts`.
-fn sweep(pts: &[Pt], max_flips: usize) -> Option<(Vec<u32>, Vec<u32>, Vec<u32>)> {
+// A flip budget makes the sweep strict: it fails on a dropped vertex as well as on too many flips.
+fn sweep(
+    pts: &[Pt],
+    budget: Option<usize>,
+    hint: Option<Pt>,
+) -> Option<(Vec<u32>, Vec<u32>, Vec<u32>)> {
     let n = pts.len();
     if n < 3 {
         return None;
     }
 
-    let (i0, i1, i2) = find_seed(pts)?;
+    let (i0, i1, i2) = find_seed(pts, hint)?;
     let center = circumcenter(pts[i0], pts[i1], pts[i2]);
 
     let perm = sort_by_distance(pts, center);
@@ -1026,7 +1145,8 @@ fn sweep(pts: &[Pt], max_flips: usize) -> Option<(Vec<u32>, Vec<u32>, Vec<u32>)>
         center: [0.0, 0.0],
         edge_stack: Vec::new(),
         flips: 0,
-        max_flips,
+        max_flips: budget.unwrap_or(usize::MAX),
+        strict: budget.is_some(),
     };
     if !sweep.run(center, seed) {
         return None;

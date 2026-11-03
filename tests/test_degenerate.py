@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 from fractions import Fraction
+from pathlib import Path
 from types import ModuleType
 
 import numpy as np
@@ -315,3 +316,90 @@ def test_tall_input_is_not_slower_than_its_transpose(threads: str) -> None:
     )
     ratio = float(proc.stdout.strip())
     assert ratio < 2.0, f"tall input took {ratio:.2f}x the time of its transpose"
+
+
+def _bar_with_background(n: int) -> np.ndarray:
+    rng = np.random.default_rng(6)
+    k = int(0.8 * n)
+    bar = np.column_stack([rng.uniform(0.0, 1e-6, k), rng.uniform(0.0, 1.0, k)])
+    return np.vstack([bar, rng.uniform(0.0, 1.0, (n - k, 2)) * [3.0, 1.0]])
+
+
+def _circle_with_center(n: int) -> np.ndarray:
+    t = np.random.default_rng(4).uniform(0.0, 2.0 * np.pi, n)
+    return np.vstack([np.column_stack([np.cos(t), np.sin(t)]), [[0.0, 0.0]]])
+
+
+def _mixed_magnitude(n: int) -> np.ndarray:
+    rng = np.random.default_rng(4)
+    h = n // 2
+    return np.vstack(
+        [rng.uniform(-1.0, 1.0, (h, 2)) * 1e-10, rng.uniform(-1.0, 1.0, (h, 2)) * 1e10]
+    )
+
+
+_SEAM_HEAVY = {
+    "bar_with_background": _bar_with_background,
+    "circle_with_center": _circle_with_center,
+    "mixed_magnitude": _mixed_magnitude,
+}
+
+
+@pytest.mark.invariant
+@pytest.mark.parametrize("threads", ["2", "8"])
+@pytest.mark.parametrize("name", list(_SEAM_HEAVY))
+def test_seam_heavy_input_matches_one_thread(name: str, threads: str) -> None:
+    pts = _SEAM_HEAVY[name](20_000)
+    serial = _delaunay_with_threads(pts, "1")
+    assert_valid_delaunay(pts, serial)
+    assert canonical_tris(_delaunay_with_threads(pts, threads)) == canonical_tris(
+        serial
+    )
+
+
+_BEST_TIME = """
+import sys, time
+import numpy as np
+mod = __import__(sys.argv[1])
+pts = np.load(sys.argv[2])
+mod.delaunay(pts)
+best = float("inf")
+for _ in range(int(sys.argv[3])):
+    t0 = time.perf_counter()
+    mod.delaunay(pts)
+    best = min(best, time.perf_counter() - t0)
+print(best)
+"""
+
+
+def _best_time(path: Path, threads: str, reps: int) -> float:
+    proc = subprocess.run(
+        [sys.executable, "-c", _BEST_TIME, IMPL_NAME, str(path), str(reps)],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env=dict(os.environ) | {"RAYON_NUM_THREADS": threads},
+        check=True,
+    )
+    return float(proc.stdout.strip())
+
+
+_SEAM_HEAVY_SIZES: dict[str, tuple[int, int]] = {
+    "bar_with_background": (1_000_000, 3),
+    "circle_with_center": (200_000, 5),
+    "mixed_magnitude": (20_000, 25),
+}
+
+
+# A seam along a dense bar, through a fan, or through a cluster tail can cost the merge most sites.
+@pytest.mark.slow
+@pytest.mark.parametrize("threads", ["2", "3"])
+@pytest.mark.parametrize("name", list(_SEAM_HEAVY_SIZES))
+def test_seam_heavy_input_is_not_slower_with_threads(
+    name: str, threads: str, tmp_path: Path
+) -> None:
+    n, reps = _SEAM_HEAVY_SIZES[name]
+    path = tmp_path / "points.npy"
+    np.save(path, _SEAM_HEAVY[name](n))
+    ratio = _best_time(path, threads, reps) / _best_time(path, "1", reps)
+    assert ratio < 1.3, f"{threads} threads took {ratio:.2f}x the 1-thread time"
