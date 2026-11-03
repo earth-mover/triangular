@@ -45,6 +45,8 @@ const GRID_MAX_ABS: f64 = 1e30;
 const SCAN_CHUNK: usize = 8192;
 const SAMPLE_WINDOWS: usize = 64;
 const SAMPLE_STEPS: usize = 64;
+const SAMPLE_MIN_WINDOWS: usize = 8;
+const SAMPLE_MIN_STEPS: usize = 16;
 
 const PRED_EPSILON: f64 = f64::EPSILON * 0.5;
 const CCW_ERRBOUND_A: f64 = (3.0 + 16.0 * PRED_EPSILON) * PRED_EPSILON;
@@ -462,6 +464,27 @@ struct RowGrid<'a> {
     flip: bool,
 }
 
+// Waking the thread pool costs more than the whole grid on small inputs, so they run on this thread.
+fn map_items<I: Send, T: Send>(
+    items: Vec<I>,
+    par: bool,
+    f: impl Fn(usize, I) -> T + Sync + Send,
+) -> Vec<T> {
+    if par {
+        items
+            .into_par_iter()
+            .enumerate()
+            .map(|(k, x)| f(k, x))
+            .collect()
+    } else {
+        items
+            .into_iter()
+            .enumerate()
+            .map(|(k, x)| f(k, x))
+            .collect()
+    }
+}
+
 // Nonzero differences of coordinates in this range stay within about 2e-46..2e30. So in-circle
 // fourth powers and their expansion tails stay normal, and the exact.rs range guard accepts them.
 #[inline]
@@ -540,11 +563,12 @@ fn row_grid(pts: &[Pt]) -> Option<RowGrid<'_>> {
 
     let su = if u_up { 1.0 } else { -1.0 };
     let sv = if v_up { 1.0 } else { -1.0 };
-    let q = pts
-        .par_iter()
-        .with_min_len(4096)
-        .map(|p| [su * p[a], sv * p[b]])
-        .collect();
+    let frame = |p: &Pt| [su * p[a], sv * p[b]];
+    let q = if n < PARALLEL_MIN_N {
+        pts.iter().map(frame).collect()
+    } else {
+        pts.par_iter().with_min_len(4096).map(frame).collect()
+    };
     Some(RowGrid {
         q: Cow::Owned(q),
         rows: starts,
@@ -558,19 +582,18 @@ fn tensor_triangles(rows: &[usize], flip: bool) -> Vec<u32> {
     let m = rows[1] - rows[0];
     let nr = rows.len() - 1;
     let mut out = vec![0u32; 6 * (nr - 1) * (m - 1)];
-    out.par_chunks_mut(6 * (m - 1))
-        .enumerate()
-        .for_each(|(r, chunk)| {
-            for (j, cell) in chunk.as_chunks_mut::<6>().0.iter_mut().enumerate() {
-                let k = (r * m + j) as u32;
-                let up = k + m as u32;
-                *cell = if flip {
-                    [k, up, k + 1, k + 1, up, up + 1]
-                } else {
-                    [k, k + 1, up, k + 1, up + 1, up]
-                };
-            }
-        });
+    let row_chunks: Vec<&mut [u32]> = out.chunks_mut(6 * (m - 1)).collect();
+    map_items(row_chunks, nr * m >= PARALLEL_MIN_N, |r, chunk| {
+        for (j, cell) in chunk.as_chunks_mut::<6>().0.iter_mut().enumerate() {
+            let k = (r * m + j) as u32;
+            let up = k + m as u32;
+            *cell = if flip {
+                [k, up, k + 1, k + 1, up, up + 1]
+            } else {
+                [k, k + 1, up, k + 1, up + 1, up]
+            };
+        }
+    });
     out
 }
 
@@ -641,10 +664,10 @@ fn push_tri(tris: &mut Vec<u32>, he: &mut Vec<u32>, v: [u32; 3], k: usize, twin:
 // Sorted random rows zip to about one illegal diagonal in six, and a fan has illegal row edges over most points.
 // Both need about n sequential flips, so a sample of short zipped windows stops them before the full zip.
 fn sample_needs_many_flips(q: &[Pt], rows: &[usize]) -> bool {
-    let windows = (q.len() / (64 * SAMPLE_STEPS)).min(SAMPLE_WINDOWS);
-    if windows < 8 {
-        return false;
-    }
+    let n = q.len();
+    // Small inputs also get a sample, because a failed full attempt costs more than the general path.
+    let windows = (n / (64 * SAMPLE_STEPS)).clamp(SAMPLE_MIN_WINDOWS, SAMPLE_WINDOWS);
+    let steps = (n / (16 * windows)).clamp(SAMPLE_MIN_STEPS, SAMPLE_STEPS);
     let span = rows[rows.len() - 2];
     let (mut tested, mut illegal) = (0usize, 0usize);
     let (mut row_tested, mut row_illegal) = (0usize, 0usize);
@@ -653,23 +676,33 @@ fn sample_needs_many_flips(q: &[Pt], rows: &[usize]) -> bool {
         let b = rows.partition_point(|&r| r <= p) - 1;
         let (l0, l1, u1) = (rows[b], rows[b + 1], rows[b + 2]);
         let (nl, nu) = (l1 - l0, u1 - l1);
-        let x = q[p][0];
-        let above = q[l1..u1].partition_point(|u| u[0] < x);
-        if b + 3 < rows.len() && above > 0 && above < nu {
-            let (r2, r3) = (rows[b + 2], rows[b + 3]);
-            let next = q[r2..r3].partition_point(|u| u[0] < x).min(r3 - r2 - 1);
-            row_tested += 1;
-            row_illegal += usize::from(in_circle(
-                q[p],
-                q[l1 + above],
-                q[l1 + above - 1],
-                q[r2 + next],
-            ));
-        }
+        let above = q[l1..u1].partition_point(|u| u[0] < q[p][0]);
         let mut i = (p - l0).min(nl - 2);
         let mut j = above.saturating_sub(1).min(nu - 2);
+        let next = if b + 3 < rows.len() {
+            &q[rows[b + 2]..rows[b + 3]]
+        } else {
+            &[]
+        };
+        let mut kn = next.partition_point(|u| u[0] < q[l1 + j + 1][0]);
+        // A row edge counts once per lower point under it, so one long edge over a fan weighs as much as the fan.
+        let mut under = 0usize;
+        let mut test_row = |i: usize, j: usize, under: usize| {
+            if next.is_empty() || under == 0 {
+                return;
+            }
+            let xe = q[l1 + j + 1][0];
+            while kn < next.len() && next[kn][0] < xe {
+                kn += 1;
+            }
+            let twin = next[kn.saturating_sub(1).min(next.len() - 1)];
+            row_tested += under;
+            if in_circle(q[l0 + i], q[l1 + j + 1], q[l1 + j], twin) {
+                row_illegal += under;
+            }
+        };
         let mut prev: Option<[Pt; 3]> = None;
-        for _ in 0..SAMPLE_STEPS {
+        for _ in 0..steps {
             if i + 1 == nl && j + 1 == nu {
                 break;
             }
@@ -685,13 +718,31 @@ fn sample_needs_many_flips(q: &[Pt], rows: &[usize]) -> bool {
             }
             prev = Some(tri);
             if lower {
+                under += 1;
                 i += 1;
             } else {
+                test_row(i, j, under.max(1));
+                under = 0;
                 j += 1;
             }
         }
+        if j + 1 < nu {
+            test_row(i, j, under);
+        }
+        // Near-degenerate rows make each exact in-circle test slow, so stop once the verdict is certain.
+        let rest = (windows - k - 1) * (steps + 1);
+        if verdict(illegal, tested + rest, row_illegal, row_tested + rest) {
+            return true;
+        }
     }
-    10 * illegal > tested || 4 * row_illegal > row_tested
+    verdict(illegal, tested, row_illegal, row_tested)
+}
+
+// Each point owns about one diagonal and one row edge, and the full scan stops at n/8 illegal edges.
+fn verdict(illegal: usize, tested: usize, row_illegal: usize, row_tested: usize) -> bool {
+    let diag = illegal as f64 / tested.max(1) as f64;
+    let row = row_illegal as f64 / row_tested.max(1) as f64;
+    10.0 * diag > 1.0 || 8.0 * (diag + row) > 1.0
 }
 
 // Zip consecutive rows, fill the hull pockets, then flip to Delaunay with Lawson's algorithm.
@@ -740,49 +791,44 @@ fn zipper_lawson(q: &[Pt], rows: &[usize], rect: &[bool]) -> Option<Vec<u32>> {
         }
     }
 
-    let bounds: Vec<(u32, u32)> = tri_s
-        .into_par_iter()
-        .zip(he_s)
-        .zip(sa_s)
-        .zip(sb_s)
-        .enumerate()
-        .map(|(b, (((tri, he), sa), sb))| {
-            let base = 3 * toff[b];
-            let (l0, l1, u1) = (rows[b], rows[b + 1], rows[b + 2]);
-            let (nl, nu) = (l1 - l0, u1 - l1);
-            let (mut i, mut j) = (0usize, 0usize);
-            let mut prev = EMPTY;
-            let mut lt = 0usize;
-            while i + 1 < nl || j + 1 < nu {
-                let lower = j + 1 == nu || (i + 1 < nl && q[l0 + i + 1][0] <= q[l1 + j + 1][0]);
-                let g = (base + lt) as u32;
-                if lower {
-                    tri[lt..lt + 3].copy_from_slice(&[
-                        (l0 + i) as u32,
-                        (l0 + i + 1) as u32,
-                        (l1 + j) as u32,
-                    ]);
-                    sa[i] = g;
-                    i += 1;
-                } else {
-                    tri[lt..lt + 3].copy_from_slice(&[
-                        (l0 + i) as u32,
-                        (l1 + j + 1) as u32,
-                        (l1 + j) as u32,
-                    ]);
-                    sb[j] = g + 1;
-                    j += 1;
-                }
-                he[lt + 2] = prev;
-                if prev != EMPTY {
-                    he[prev as usize - base] = g + 2;
-                }
-                prev = if lower { g + 1 } else { g };
-                lt += 3;
+    let par = n >= PARALLEL_MIN_N;
+    let bands: Vec<_> = tri_s.into_iter().zip(he_s).zip(sa_s).zip(sb_s).collect();
+    let bounds: Vec<(u32, u32)> = map_items(bands, par, |b, (((tri, he), sa), sb)| {
+        let base = 3 * toff[b];
+        let (l0, l1, u1) = (rows[b], rows[b + 1], rows[b + 2]);
+        let (nl, nu) = (l1 - l0, u1 - l1);
+        let (mut i, mut j) = (0usize, 0usize);
+        let mut prev = EMPTY;
+        let mut lt = 0usize;
+        while i + 1 < nl || j + 1 < nu {
+            let lower = j + 1 == nu || (i + 1 < nl && q[l0 + i + 1][0] <= q[l1 + j + 1][0]);
+            let g = (base + lt) as u32;
+            if lower {
+                tri[lt..lt + 3].copy_from_slice(&[
+                    (l0 + i) as u32,
+                    (l0 + i + 1) as u32,
+                    (l1 + j) as u32,
+                ]);
+                sa[i] = g;
+                i += 1;
+            } else {
+                tri[lt..lt + 3].copy_from_slice(&[
+                    (l0 + i) as u32,
+                    (l1 + j + 1) as u32,
+                    (l1 + j) as u32,
+                ]);
+                sb[j] = g + 1;
+                j += 1;
             }
-            (base as u32 + 2, prev)
-        })
-        .collect();
+            he[lt + 2] = prev;
+            if prev != EMPTY {
+                he[prev as usize - base] = g + 2;
+            }
+            prev = if lower { g + 1 } else { g };
+            lt += 3;
+        }
+        (base as u32 + 2, prev)
+    });
 
     {
         let mut hr = &mut he[..];
@@ -793,7 +839,7 @@ fn zipper_lawson(q: &[Pt], rows: &[usize], rect: &[bool]) -> Option<Vec<u32>> {
             hr = rest;
         }
         let (seg_above, seg_below) = (&seg_above, &seg_below);
-        he_s.into_par_iter().enumerate().for_each(|(b, hb)| {
+        map_items(he_s, par, |b, hb| {
             let base = 3 * toff[b];
             if b > 0 {
                 for s in rows[b] - b..rows[b + 1] - b - 1 {
@@ -851,9 +897,8 @@ fn zipper_lawson(q: &[Pt], rows: &[usize], rect: &[bool]) -> Option<Vec<u32>> {
     let limit = n / 8 + 1024;
     let found = AtomicUsize::new(0);
     // Chunks split by edge, not by band, so a grid with few long bands still scans in parallel.
-    let chunks: Option<Vec<Vec<u32>>> = (0..ne.div_ceil(SCAN_CHUNK))
-        .into_par_iter()
-        .map(|c| {
+    let chunks: Option<Vec<Vec<u32>>> =
+        map_items((0..ne.div_ceil(SCAN_CHUNK)).collect(), par, |_, c| {
             if found.load(Relaxed) > limit {
                 return None;
             }
@@ -885,6 +930,7 @@ fn zipper_lawson(q: &[Pt], rows: &[usize], rect: &[bool]) -> Option<Vec<u32>> {
                 .collect();
             (found.fetch_add(illegal.len(), Relaxed) + illegal.len() <= limit).then_some(illegal)
         })
+        .into_iter()
         .collect();
     let mut todo = chunks?.concat();
     let budget = 4 * todo.len() + n / 32 + 1024;
@@ -904,23 +950,23 @@ fn triangulate_row_grid(pts: &[Pt]) -> Option<Vec<u32>> {
     let g = row_grid(pts)?;
     let q: &[Pt] = &g.q;
     let rows = &g.rows;
-    let rect: Vec<bool> = (0..rows.len() - 2)
-        .into_par_iter()
-        .with_min_len(8)
-        .map(|b| {
-            let lower = &q[rows[b]..rows[b + 1]];
-            let upper = &q[rows[b + 1]..rows[b + 2]];
-            lower.len() == upper.len() && lower.iter().zip(upper).all(|(l, u)| l[0] == u[0])
-        })
-        .collect();
+    let band_rect = |b: usize| {
+        let lower = &q[rows[b]..rows[b + 1]];
+        let upper = &q[rows[b + 1]..rows[b + 2]];
+        lower.len() == upper.len() && lower.iter().zip(upper).all(|(l, u)| l[0] == u[0])
+    };
+    let par = q.len() >= PARALLEL_MIN_N;
+    let rect: Vec<bool> = map_items((0..rows.len() - 2).collect(), par, |_, b| band_rect(b));
     if rect.iter().all(|&r| r) {
         return Some(tensor_triangles(rows, g.flip));
     }
     let mut tris = zipper_lawson(q, rows, &rect)?;
-    if g.flip {
+    if g.flip && par {
         tris.par_chunks_mut(3)
             .with_min_len(4096)
             .for_each(|t| t.swap(1, 2));
+    } else if g.flip {
+        tris.chunks_mut(3).for_each(|t| t.swap(1, 2));
     }
     Some(tris)
 }
@@ -1864,17 +1910,37 @@ mod tests {
     #[allow(clippy::float_cmp)]
     fn sample_flags_scan_lines_and_fans_but_not_reduced_grids() {
         let mut seed = 0x2545_f491_4f6c_dd1d_u64;
-        let mut scan: Vec<Pt> = Vec::new();
-        for r in 0..10u32 {
-            let mut xs: Vec<f64> = (0..5000)
+        let mut sorted_row = |m: usize| {
+            let mut xs: Vec<f64> = (0..m)
                 .map(|_| {
                     seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
                     (seed >> 11) as f64 / (1u64 << 53) as f64
                 })
                 .collect();
             xs.sort_by(f64::total_cmp);
-            scan.extend(xs.into_iter().map(|x| [x, f64::from(r) * 1e-6]));
-        }
+            xs
+        };
+        let scan_rows = |xs: Vec<Vec<f64>>, dy: f64| -> Vec<Pt> {
+            xs.into_iter()
+                .zip(0u32..)
+                .flat_map(|(row, r)| row.into_iter().map(move |x| [x, f64::from(r) * dy]))
+                .collect()
+        };
+        let scan = scan_rows((0..10).map(|_| sorted_row(5000)).collect(), 1e-6);
+        let small_scan = scan_rows((0..100).map(|_| sorted_row(50)).collect(), 1e-6);
+        let shared = sorted_row(20);
+        let mixed = scan_rows(
+            (0..100)
+                .map(|r| {
+                    if r < 35 {
+                        sorted_row(20)
+                    } else {
+                        shared.clone()
+                    }
+                })
+                .collect(),
+            1e-6 / 20.0,
+        );
         let dense = (1..20_000).map(|k| f64::from(k) / 20_000.0);
         let fan: Vec<Pt> = dense
             .clone()
@@ -1888,7 +1954,20 @@ mod tests {
                 (0..c).map(move |k| [f64::from(k) / f64::from(c), f64::from(r) * 2e-3])
             })
             .collect();
-        for (pts, flagged) in [(&scan, true), (&fan, true), (&reduced, false)] {
+        let small_reduced: Vec<Pt> = (0..10u32)
+            .flat_map(|r| {
+                let c = 6 + r.min(9 - r);
+                (0..c).map(move |k| [f64::from(k) / f64::from(c), f64::from(r) * 0.1])
+            })
+            .collect();
+        for (pts, flagged) in [
+            (&scan, true),
+            (&fan, true),
+            (&reduced, false),
+            (&small_scan, true),
+            (&mixed, true),
+            (&small_reduced, false),
+        ] {
             let mut rows = vec![0usize];
             rows.extend((1..pts.len()).filter(|&i| pts[i][1] != pts[i - 1][1]));
             rows.push(pts.len());
