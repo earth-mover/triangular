@@ -27,6 +27,7 @@ const EMPTY: u32 = u32::MAX;
 const PARALLEL_MIN_N: usize = 50_000;
 
 const STRIP_MIN_PTS: usize = 1024;
+const PAR_SORT_MIN_N: usize = 1 << 14;
 const GRID_HULL_MIN_N: usize = 100_000;
 const GRID_HULL_MIN_ROWS: usize = 16;
 const GRID_CLOSE_REL: f64 = 1e-10;
@@ -235,6 +236,25 @@ fn prev_he(e: usize) -> usize {
     }
 }
 
+// The integer order of the key is the same as `f64::total_cmp`.
+#[inline]
+fn total_key(v: f64) -> u64 {
+    let b = v.to_bits();
+    b ^ ((((b as i64) >> 63) as u64) | (1 << 63))
+}
+
+#[inline]
+fn argmin(idx: impl Iterator<Item = usize>, key: impl Fn(usize) -> f64) -> Option<usize> {
+    let mut best: Option<(u64, usize)> = None;
+    for i in idx {
+        let k = total_key(key(i));
+        if best.is_none_or(|(bk, _)| k < bk) {
+            best = Some((k, i));
+        }
+    }
+    best.map(|(_, i)| i)
+}
+
 fn find_seed(pts: &[Pt]) -> Option<(usize, usize, usize)> {
     let n = pts.len();
 
@@ -252,19 +272,20 @@ fn find_seed(pts: &[Pt]) -> Option<(usize, usize, usize)> {
     }
     let bbox_center = [f64::midpoint(minx, maxx), f64::midpoint(miny, maxy)];
 
-    let i0 = (0..n)
-        .min_by(|&a, &b| dist2(bbox_center, pts[a]).total_cmp(&dist2(bbox_center, pts[b])))
-        .unwrap();
+    let i0 = argmin(0..n, |i| dist2(bbox_center, pts[i]))?;
     let p0 = pts[i0];
 
-    let i1 = (0..n)
-        .filter(|&i| i != i0 && !same_point(p0, pts[i]))
-        .min_by(|&a, &b| dist2(p0, pts[a]).total_cmp(&dist2(p0, pts[b])))?;
+    let i1 = argmin(
+        (0..n).filter(|&i| i != i0 && !same_point(p0, pts[i])),
+        |i| dist2(p0, pts[i]),
+    )?;
     let p1 = pts[i1];
 
-    let i2 = (0..n)
-        .filter(|&i| i != i0 && i != i1 && !same_point(p0, pts[i]) && !same_point(p1, pts[i]))
-        .min_by(|&a, &b| circumradius2(p0, p1, pts[a]).total_cmp(&circumradius2(p0, p1, pts[b])))?;
+    let i2 = argmin(
+        (0..n)
+            .filter(|&i| i != i0 && i != i1 && !same_point(p0, pts[i]) && !same_point(p1, pts[i])),
+        |i| circumradius2(p0, p1, pts[i]),
+    )?;
     let p2 = pts[i2];
 
     if circumradius2(p0, p1, p2).is_infinite() {
@@ -493,38 +514,48 @@ pub fn triangulate(pts: &[Pt]) -> Vec<u32> {
     triangulate_seq(pts)
 }
 
-fn dedup_sorted_sites(pts: &[Pt]) -> Vec<u32> {
-    let n = pts.len();
-    let mut order: Vec<u32> = (0..n as u32).collect();
-    order.par_sort_unstable_by(|&a, &b| {
-        pts[a as usize][0]
-            .total_cmp(&pts[b as usize][0])
-            .then(pts[a as usize][1].total_cmp(&pts[b as usize][1]))
-            .then(a.cmp(&b))
-    });
-    let mut sites: Vec<u32> = Vec::with_capacity(n);
-    for &i in &order {
-        if sites
-            .last()
-            .is_none_or(|&last| !same_point(pts[last as usize], pts[i as usize]))
-        {
-            sites.push(i);
-        }
-    }
-    sites
+#[inline]
+fn from_total_key(k: u64) -> f64 {
+    f64::from_bits(if k >> 63 == 1 { k ^ (1 << 63) } else { !k })
+}
+
+type SortKey = (u64, u64, u32);
+
+#[inline]
+fn key_point(k: &SortKey) -> Pt {
+    [from_total_key(k.0), from_total_key(k.1)]
+}
+
+fn sorted_unique(pts: &[Pt]) -> Vec<SortKey> {
+    let key = |(i, p): (usize, &Pt)| (total_key(p[0]), total_key(p[1]), i as u32);
+    let mut keyed: Vec<SortKey> = if pts.len() >= PAR_SORT_MIN_N {
+        let mut keyed: Vec<_> = pts.par_iter().enumerate().map(key).collect();
+        keyed.par_sort_unstable();
+        keyed
+    } else {
+        let mut keyed: Vec<_> = pts.iter().enumerate().map(key).collect();
+        keyed.sort_unstable();
+        keyed
+    };
+    keyed.dedup_by(|cur, last| same_point(key_point(last), key_point(cur)));
+    keyed
 }
 
 fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
-    let sites = dedup_sorted_sites(pts);
-    let m = sites.len();
+    let keyed = sorted_unique(pts);
+    let m = keyed.len();
     if m < 3 {
         return Some(Vec::new());
     }
-    let a = pts[sites[0] as usize];
-    let b = pts[sites[m - 1] as usize];
-    if sites.iter().all(|&i| ccw(a, b, pts[i as usize]) == 0.0) {
+    let sites: Vec<u32> = keyed.par_iter().map(|k| k.2).collect();
+    let spts: Vec<Pt> = keyed.par_iter().map(key_point).collect();
+    drop(keyed);
+    let (a, b) = (spts[0], spts[m - 1]);
+    if spts.iter().all(|&p| ccw(a, b, p) == 0.0) {
         return Some(Vec::new());
     }
+    // Vertex ids are sorted ranks for memory locality. `extract_triangles` maps them back to input ids.
+    let pts = spts.as_slice();
 
     let nstrips = strip_count(m);
     if nstrips < 2 {
@@ -540,9 +571,8 @@ fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
     let parts: Vec<StripResult> = ranges
         .par_iter()
         .map(|&(lo, hi)| {
-            let strip = &sites[lo..hi];
-            let mut qe = QuadEdge::with_capacity(pts, 3 * strip.len());
-            let (ldo, rdo) = qe.delaunay(strip)?;
+            let mut qe = QuadEdge::with_capacity(pts, 3 * (hi - lo));
+            let (ldo, rdo) = qe.delaunay(lo as u32, hi as u32)?;
             Some((qe.onext, qe.data, ldo, rdo))
         })
         .collect::<Option<Vec<StripResult>>>()?;
@@ -571,9 +601,7 @@ fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
     }
     let _ = acc_ldo;
 
-    let mut out = Vec::with_capacity(6 * m);
-    extract_triangles(&combined, &mut out);
-    Some(out)
+    Some(extract_triangles(&combined, &sites))
 }
 
 fn strip_count(m: usize) -> usize {
@@ -594,24 +622,26 @@ fn triangulate_seq(pts: &[Pt]) -> Vec<u32> {
     };
     let center = circumcenter(pts[i0], pts[i1], pts[i2]);
 
-    let d2: Vec<f64> = pts.iter().map(|&p| dist2(center, p)).collect();
-    let mut perm: Vec<usize> = (0..n).collect();
-    perm.sort_unstable_by(|&a, &b| {
-        d2[a].total_cmp(&d2[b]).then_with(|| {
-            pts[a][0]
-                .total_cmp(&pts[b][0])
-                .then_with(|| pts[a][1].total_cmp(&pts[b][1]))
+    let mut keyed: Vec<(u64, u32)> = pts
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| (total_key(dist2(center, p)), i as u32))
+        .collect();
+    keyed.sort_unstable_by(|&(ka, a), &(kb, b)| {
+        ka.cmp(&kb).then_with(|| {
+            let (pa, pb) = (pts[a as usize], pts[b as usize]);
+            pa[0]
+                .total_cmp(&pb[0])
+                .then_with(|| pa[1].total_cmp(&pb[1]))
                 .then(a.cmp(&b))
         })
     });
 
-    let mut inv = vec![0usize; n];
-    for (new_i, &old_i) in perm.iter().enumerate() {
-        inv[old_i] = new_i;
-    }
-    let seed = (inv[i0], inv[i1], inv[i2]);
-
-    let permuted: Vec<Pt> = perm.iter().map(|&i| pts[i]).collect();
+    let perm: Vec<u32> = keyed.iter().map(|&(_, i)| i).collect();
+    drop(keyed);
+    let permuted: Vec<Pt> = perm.iter().map(|&i| pts[i as usize]).collect();
+    let pos = |old: usize| perm.iter().position(|&i| i as usize == old).unwrap_or(0);
+    let seed = (pos(i0), pos(i1), pos(i2));
 
     let hash_size = ((n as f64).sqrt().ceil() as usize).next_power_of_two();
     let mut sweep = Sweep {
@@ -627,11 +657,11 @@ fn triangulate_seq(pts: &[Pt]) -> Vec<u32> {
         edge_stack: Vec::new(),
     };
     sweep.run(center, seed);
-    sweep
-        .triangles
-        .iter()
-        .map(|&t| perm[t as usize] as u32)
-        .collect()
+    let mut tris = sweep.triangles;
+    for t in &mut tris {
+        *t = perm[*t as usize];
+    }
+    tris
 }
 
 struct QuadEdge<'a> {
@@ -892,54 +922,77 @@ impl QuadEdge<'_> {
         }
     }
 
-    fn delaunay(&mut self, sites: &[u32]) -> Option<(u32, u32)> {
-        let n = sites.len();
+    fn delaunay(&mut self, lo: u32, hi: u32) -> Option<(u32, u32)> {
+        let n = hi - lo;
         if n == 2 {
-            return Some(self.base2(sites[0], sites[1]));
+            return Some(self.base2(lo, lo + 1));
         }
         if n == 3 {
-            return Some(self.base3(sites[0], sites[1], sites[2]));
+            return Some(self.base3(lo, lo + 1, lo + 2));
         }
-        let half = n / 2;
-        let (ldo, ldi) = self.delaunay(&sites[..half])?;
-        let (rdi, rdo) = self.delaunay(&sites[half..])?;
+        let mid = lo + n / 2;
+        let (ldo, ldi) = self.delaunay(lo, mid)?;
+        let (rdi, rdo) = self.delaunay(mid, hi)?;
         self.merge(ldo, ldi, rdi, rdo)
     }
 }
 
-fn extract_triangles(qe: &QuadEdge<'_>, out: &mut Vec<u32>) {
-    let mut seen = vec![false; qe.onext.len()];
+const EXTRACT_CHUNK_QUADS: usize = 1 << 14;
+
+fn extract_triangles(qe: &QuadEdge<'_>, ids: &[u32]) -> Vec<u32> {
+    let quads = qe.onext.len() / 4;
+    let mut dead: Vec<bool> = (0..quads).map(|q| qe.data[4 * q] == EMPTY).collect();
     for &slot in &qe.free {
-        seen[slot as usize] = true;
-        seen[QuadEdge::sym(slot) as usize] = true;
+        dead[(slot >> 2) as usize] = true;
     }
-    for start in (0..qe.onext.len() as u32).step_by(4) {
-        if qe.org(start) == EMPTY {
-            continue;
-        }
-        for e0 in [start, QuadEdge::sym(start)] {
-            if seen[e0 as usize] {
-                continue;
+    // Emit each face once, from its lowest live edge. This keeps the row order of a sequential scan.
+    let first_live = |e0: u32, e: u32| e > e0 || dead[(e >> 2) as usize];
+
+    let parts: Vec<Vec<u32>> = dead
+        .par_chunks(EXTRACT_CHUNK_QUADS)
+        .enumerate()
+        .map(|(c, chunk)| {
+            let mut part = Vec::with_capacity(2 * chunk.len() + 16);
+            for (j, &is_dead) in chunk.iter().enumerate() {
+                if is_dead {
+                    continue;
+                }
+                let start = (4 * (c * EXTRACT_CHUNK_QUADS + j)) as u32;
+                for e0 in [start, QuadEdge::sym(start)] {
+                    let e1 = qe.lnext(e0);
+                    let e2 = qe.lnext(e1);
+                    if qe.lnext(e2) != e0 || !first_live(e0, e1) || !first_live(e0, e2) {
+                        continue;
+                    }
+                    let a = qe.org(e0);
+                    let b = qe.org(e1);
+                    let c = qe.org(e2);
+                    if ccw(qe.p(a), qe.p(b), qe.p(c)) > 0.0 {
+                        part.extend_from_slice(&[
+                            ids[a as usize],
+                            ids[b as usize],
+                            ids[c as usize],
+                        ]);
+                    }
+                }
             }
-            let e1 = qe.lnext(e0);
-            let e2 = qe.lnext(e1);
-            if qe.lnext(e2) != e0 {
-                continue;
-            }
-            let a = qe.org(e0);
-            let b = qe.org(e1);
-            let c = qe.org(e2);
-            if ccw(qe.p(a), qe.p(b), qe.p(c)) <= 0.0 {
-                continue;
-            }
-            seen[e0 as usize] = true;
-            seen[e1 as usize] = true;
-            seen[e2 as usize] = true;
-            out.push(a);
-            out.push(b);
-            out.push(c);
-        }
+            part
+        })
+        .collect();
+
+    let mut out = vec![0u32; parts.iter().map(Vec::len).sum()];
+    let mut rest = out.as_mut_slice();
+    let mut dests = Vec::with_capacity(parts.len());
+    for part in &parts {
+        let (head, tail) = rest.split_at_mut(part.len());
+        dests.push(head);
+        rest = tail;
     }
+    dests
+        .into_par_iter()
+        .zip(parts.par_iter())
+        .for_each(|(dst, src)| dst.copy_from_slice(src));
+    out
 }
 
 #[allow(clippy::float_cmp)]
@@ -948,62 +1001,42 @@ fn same_point(p: Pt, q: Pt) -> bool {
 }
 
 #[allow(clippy::float_cmp)]
-fn is_collinear(pts: &[Pt], uniq: &[usize]) -> bool {
-    let a = pts[uniq[0]];
-    let b = pts[uniq[uniq.len() - 1]];
-    uniq.iter().all(|&i| ccw(a, b, pts[i]) == 0.0)
+fn is_collinear(uniq: &[(Pt, u32)]) -> bool {
+    let a = uniq[0].0;
+    let b = uniq[uniq.len() - 1].0;
+    uniq.iter().all(|&(p, _)| ccw(a, b, p) == 0.0)
 }
 
-fn half_chain(pts: &[Pt], seq: impl Iterator<Item = usize>) -> Vec<usize> {
-    let mut chain: Vec<usize> = Vec::new();
-    for i in seq {
-        while chain.len() >= 2
-            && ccw(
-                pts[chain[chain.len() - 2]],
-                pts[chain[chain.len() - 1]],
-                pts[i],
-            ) < 0.0
-        {
+fn half_chain<'a>(seq: impl Iterator<Item = &'a (Pt, u32)>) -> Vec<(Pt, u32)> {
+    let mut chain: Vec<(Pt, u32)> = Vec::new();
+    for &(p, i) in seq {
+        while chain.len() >= 2 && ccw(chain[chain.len() - 2].0, chain[chain.len() - 1].0, p) < 0.0 {
             chain.pop();
         }
-        chain.push(i);
+        chain.push((p, i));
     }
     chain
 }
 
 fn hull_edges_full(pts: &[Pt]) -> Vec<[i32; 2]> {
-    let n = pts.len();
-    let mut order: Vec<usize> = (0..n).collect();
-    order.sort_unstable_by(|&a, &b| {
-        pts[a][0]
-            .total_cmp(&pts[b][0])
-            .then(pts[a][1].total_cmp(&pts[b][1]))
-            .then(a.cmp(&b))
-    });
+    let uniq: Vec<(Pt, u32)> = sorted_unique(pts)
+        .iter()
+        .map(|k| (key_point(k), k.2))
+        .collect();
 
-    let mut uniq: Vec<usize> = Vec::with_capacity(n);
-    for &i in &order {
-        if uniq
-            .last()
-            .is_none_or(|&last| !same_point(pts[last], pts[i]))
-        {
-            uniq.push(i);
-        }
-    }
-
-    if uniq.len() < 3 || is_collinear(pts, &uniq) {
+    if uniq.len() < 3 || is_collinear(&uniq) {
         return Vec::new();
     }
 
-    let mut hull = half_chain(pts, uniq.iter().copied());
+    let mut hull = half_chain(uniq.iter());
     hull.pop();
-    let mut upper = half_chain(pts, uniq.iter().rev().copied());
+    let mut upper = half_chain(uniq.iter().rev());
     upper.pop();
     hull.append(&mut upper);
 
     let k = hull.len();
     (0..k)
-        .map(|i| [hull[i] as i32, hull[(i + 1) % k] as i32])
+        .map(|i| [hull[i].1 as i32, hull[(i + 1) % k].1 as i32])
         .collect()
 }
 
