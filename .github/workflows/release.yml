@@ -24,17 +24,17 @@ jobs:
             target: x64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.12"
       - name: Stamp version from release tag
         if: github.event_name == 'release'
         shell: bash
         run: python .github/scripts/stamp_version.py "${{ github.event.release.tag_name }}"
-      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+      - uses: PyO3/maturin-action@v1.51.0
         with:
           target: ${{ matrix.target }}
           args: --release --out dist
@@ -54,7 +54,7 @@ jobs:
           assert hull.shape == (4, 2), hull
           print('smoke ok')
           "
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: wheels-${{ matrix.target }}
           path: dist
@@ -62,17 +62,17 @@ jobs:
   sdist:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - name: Stamp version from release tag
         if: github.event_name == 'release'
         run: python3 .github/scripts/stamp_version.py "${{ github.event.release.tag_name }}"
-      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+      - uses: PyO3/maturin-action@v1.51.0
         with:
           command: sdist
           args: --out dist
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: sdist
           path: dist
@@ -87,8 +87,8 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: actions/download-artifact@v8.0.2
         with:
           path: dist
           merge-multiple: true
-      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+      - uses: pypa/gh-action-pypi-publish@v1.14.3
