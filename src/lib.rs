@@ -28,11 +28,9 @@ const PARALLEL_MIN_N: usize = 10_000;
 
 const STRIP_MIN_PTS: usize = 1024;
 const STRIP_TARGET_PTS: usize = 4096;
+// A planar graph on k sites has at most 3k edges, so 3 quad edges per site never run out.
 const QUAD_SLOTS: usize = 12;
 const BUCKETS_PER_STRIP: usize = 16;
-
-type Sites = (Vec<Pt>, Vec<u32>, Vec<(usize, usize)>);
-type Grouped = (Vec<(Pt, u32)>, Vec<usize>);
 const GRID_HULL_MIN_N: usize = 100_000;
 const GRID_HULL_MIN_ROWS: usize = 16;
 const GRID_CLOSE_REL: f64 = 1e-10;
@@ -43,6 +41,9 @@ const CCW_ERRBOUND_A: f64 = (3.0 + 16.0 * PRED_EPSILON) * PRED_EPSILON;
 const ICC_ERRBOUND_A: f64 = (10.0 + 96.0 * PRED_EPSILON) * PRED_EPSILON;
 
 pub type Pt = [f64; 2];
+
+type Sites = (Vec<Pt>, Vec<u32>, Vec<(usize, usize)>);
+type Grouped = (Vec<(Pt, u32)>, Vec<usize>);
 
 #[inline]
 fn co(p: Pt) -> Coord<f64> {
@@ -578,10 +579,23 @@ fn sorted_sites(pts: &[Pt]) -> Sites {
     (spts, ids, ranges)
 }
 
-struct BucketPlan {
+#[derive(Clone, Copy)]
+struct XBuckets {
     xmin: f64,
     scale: f64,
-    nbuckets: usize,
+    n: usize,
+}
+
+impl XBuckets {
+    // The map is monotone in x, so equal x share a bucket and strips never overlap in x.
+    #[inline]
+    fn of(self, x: f64) -> usize {
+        (((x - self.xmin) * self.scale) as usize).min(self.n - 1)
+    }
+}
+
+struct BucketPlan {
+    xb: XBuckets,
     chunk: usize,
     hists: Vec<Vec<u32>>,
     strip_of: Vec<u32>,
@@ -591,8 +605,7 @@ struct BucketPlan {
 impl BucketPlan {
     #[inline]
     fn strip(&self, x: f64) -> usize {
-        let b = (((x - self.xmin) * self.scale) as usize).min(self.nbuckets - 1);
-        self.strip_of[b] as usize
+        self.strip_of[self.xb.of(x)] as usize
     }
 }
 
@@ -607,13 +620,18 @@ fn bucket_plan(pts: &[Pt], nstrips: usize) -> Option<BucketPlan> {
     if !(scale.is_finite() && scale > 0.0) {
         return None;
     }
+    let xb = XBuckets {
+        xmin,
+        scale,
+        n: nbuckets,
+    };
     let chunk = n.div_ceil(4 * rayon::current_num_threads()).max(1 << 12);
     let hists: Vec<Vec<u32>> = pts
         .par_chunks(chunk)
         .map(|c| {
             let mut h = vec![0u32; nbuckets];
             for p in c {
-                h[(((p[0] - xmin) * scale) as usize).min(nbuckets - 1)] += 1;
+                h[xb.of(p[0])] += 1;
             }
             h
         })
@@ -648,9 +666,7 @@ fn bucket_plan(pts: &[Pt], nstrips: usize) -> Option<BucketPlan> {
         return None;
     }
     Some(BucketPlan {
-        xmin,
-        scale,
-        nbuckets,
+        xb,
         chunk,
         hists,
         strip_of,
@@ -738,6 +754,9 @@ fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
     }
 
     let len = QUAD_SLOTS * spts.len();
+    if len >= EMPTY as usize {
+        return None;
+    }
     let mut onext = vec![0u32; len];
     let mut data = vec![0u32; len];
     let root = build_strips(&spts, &ranges, &mut onext, &mut data, 0)?;
