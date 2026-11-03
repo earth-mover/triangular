@@ -19,7 +19,6 @@ use pyo3::types::{PyModule, PyModuleMethods};
 use pyo3::{pyfunction, pymodule, wrap_pyfunction, Bound, PyResult, Python};
 use rayon::prelude::*;
 use robust::{incircle, orient2d, Coord};
-#[cfg(feature = "python")]
 use std::borrow::Cow;
 
 mod exact;
@@ -39,6 +38,8 @@ const EXTREME_SAMPLE: usize = 16_384;
 const UNDERFLOW_SLACK: f64 = 1e-300;
 const SAFE_MIN_ABS: f64 = 1e-100;
 const SAFE_MAX_ABS: f64 = 1e100;
+const GRID_MIN_ABS: f64 = 1e-30;
+const GRID_MAX_ABS: f64 = 1e30;
 
 const PRED_EPSILON: f64 = f64::EPSILON * 0.5;
 const CCW_ERRBOUND_A: f64 = (3.0 + 16.0 * PRED_EPSILON) * PRED_EPSILON;
@@ -450,8 +451,405 @@ impl Sweep<'_> {
     }
 }
 
+struct RowGrid<'a> {
+    q: Cow<'a, [Pt]>,
+    rows: Vec<usize>,
+    flip: bool,
+}
+
+// Nonzero differences of coordinates in this range stay within about 2e-46..2e30. So in-circle
+// fourth powers and their expansion tails stay normal, and the exact.rs range guard accepts them.
+#[inline]
+fn grid_safe(v: f64) -> bool {
+    v == 0.0 || (GRID_MIN_ABS..=GRID_MAX_ABS).contains(&v.abs())
+}
+
+// Rows have one exact row coordinate and a strictly monotone along-row coordinate.
+// The canonical frame (along-row = x up, rows = y up) is an isometry of the input, so it keeps Delaunay.
+#[allow(clippy::float_cmp)]
+fn row_grid(pts: &[Pt]) -> Option<RowGrid<'_>> {
+    let n = pts.len();
+    if n < 4 || n > (u32::MAX / 8) as usize {
+        return None;
+    }
+    let a = if pts[0][1] == pts[1][1] {
+        0
+    } else if pts[0][0] == pts[1][0] {
+        1
+    } else {
+        return None;
+    };
+    let b = 1 - a;
+    let du = pts[1][a] - pts[0][a];
+    if !(du.is_finite() && du != 0.0) {
+        return None;
+    }
+    let u_up = du > 0.0;
+
+    let mut starts = vec![0usize];
+    let mut prev_v = f64::NAN;
+    let mut v_up = None;
+    let mut s = 0usize;
+    while s < n {
+        let v = pts[s][b];
+        let mut last_u = pts[s][a];
+        if !(grid_safe(v) && grid_safe(last_u)) {
+            return None;
+        }
+        if !prev_v.is_nan() {
+            let dir = v > prev_v;
+            if *v_up.get_or_insert(dir) != dir {
+                return None;
+            }
+        }
+        let mut e = s + 1;
+        while e < n && pts[e][b] == v {
+            let u = pts[e][a];
+            if !grid_safe(u) || (u_up && u <= last_u) || (!u_up && u >= last_u) {
+                return None;
+            }
+            last_u = u;
+            e += 1;
+        }
+        if e - s < 2 {
+            return None;
+        }
+        starts.push(e);
+        prev_v = v;
+        s = e;
+    }
+    let nr = starts.len() - 1;
+    if nr < 2 {
+        return None;
+    }
+    let v_up = v_up.unwrap_or(true);
+    // A reflected frame turns counter-clockwise triangles clockwise in the input frame.
+    let flip = (a == 1) != (u_up != v_up);
+    if a == 0 && u_up && v_up {
+        return Some(RowGrid {
+            q: Cow::Borrowed(pts),
+            rows: starts,
+            flip,
+        });
+    }
+
+    let su = if u_up { 1.0 } else { -1.0 };
+    let sv = if v_up { 1.0 } else { -1.0 };
+    let q = pts
+        .par_iter()
+        .with_min_len(4096)
+        .map(|p| [su * p[a], sv * p[b]])
+        .collect();
+    Some(RowGrid {
+        q: Cow::Owned(q),
+        rows: starts,
+        flip,
+    })
+}
+
+// Every grid point is outside or on the circumcircle of each cell of a tensor grid, so
+// splitting each cell along one diagonal is Delaunay without any predicate.
+fn tensor_triangles(rows: &[usize], flip: bool) -> Vec<u32> {
+    let m = rows[1] - rows[0];
+    let nr = rows.len() - 1;
+    let mut out = vec![0u32; 6 * (nr - 1) * (m - 1)];
+    out.par_chunks_mut(6 * (m - 1))
+        .enumerate()
+        .for_each(|(r, chunk)| {
+            for (j, cell) in chunk.as_chunks_mut::<6>().0.iter_mut().enumerate() {
+                let k = (r * m + j) as u32;
+                let up = k + m as u32;
+                *cell = if flip {
+                    [k, up, k + 1, k + 1, up, up + 1]
+                } else {
+                    [k, k + 1, up, k + 1, up + 1, up]
+                };
+            }
+        });
+    out
+}
+
+#[inline]
+fn link_he(he: &mut [u32], a: usize, b: u32) {
+    he[a] = b;
+    if b != EMPTY {
+        he[b as usize] = a as u32;
+    }
+}
+
+#[inline]
+fn edge_illegal(q: &[Pt], tris: &[u32], he: &[u32], e: usize) -> bool {
+    let tw = he[e];
+    if tw == EMPTY {
+        return false;
+    }
+    let p0 = tris[prev_he(e)];
+    let pr = tris[e];
+    let pl = tris[next_he(e)];
+    let p1 = tris[prev_he(tw as usize)];
+    in_circle(
+        q[p0 as usize],
+        q[pr as usize],
+        q[pl as usize],
+        q[p1 as usize],
+    )
+}
+
+fn lawson(q: &[Pt], tris: &mut [u32], he: &mut [u32], stack: &mut Vec<u32>, budget: usize) -> bool {
+    let mut flips = 0usize;
+    while let Some(e) = stack.pop() {
+        let a = e as usize;
+        if !edge_illegal(q, tris, he, a) {
+            continue;
+        }
+        flips += 1;
+        if flips > budget {
+            return false;
+        }
+        let b = he[a] as usize;
+        let ar = prev_he(a);
+        let al = next_he(a);
+        let bl = prev_he(b);
+        let br = next_he(b);
+        let p0 = tris[ar];
+        let p1 = tris[bl];
+        tris[a] = p1;
+        tris[b] = p0;
+        let hbl = he[bl];
+        let har = he[ar];
+        link_he(he, a, hbl);
+        link_he(he, b, har);
+        link_he(he, ar, bl as u32);
+        stack.extend_from_slice(&[a as u32, al as u32, b as u32, br as u32]);
+    }
+    true
+}
+
+fn push_tri(tris: &mut Vec<u32>, he: &mut Vec<u32>, v: [u32; 3], k: usize, twin: u32) -> usize {
+    let t = tris.len();
+    tris.extend_from_slice(&v);
+    he.extend_from_slice(&[EMPTY, EMPTY, EMPTY]);
+    link_he(he, t + k, twin);
+    t
+}
+
+// Zip consecutive rows, fill the hull pockets, then flip to Delaunay with Lawson's algorithm.
+// A triangulation of the hull with every edge locally Delaunay is Delaunay.
+#[allow(clippy::too_many_lines)]
+fn zipper_lawson(q: &[Pt], rows: &[usize], rect: &[bool]) -> Option<Vec<u32>> {
+    let n = q.len();
+    let nr = rows.len() - 1;
+    let nb = nr - 1;
+    let mut toff = Vec::with_capacity(nb + 1);
+    toff.push(0usize);
+    for b in 0..nb {
+        toff.push(toff[b] + rows[b + 2] - rows[b] - 2);
+    }
+    let nt_band = toff[nb];
+    let mut tris = vec![0u32; 3 * nt_band];
+    let mut he = vec![EMPTY; 3 * nt_band];
+    let mut seg_above = vec![EMPTY; n - nr];
+    let mut seg_below = vec![EMPTY; n - nr];
+
+    let mut tri_s = Vec::with_capacity(nb);
+    let mut he_s = Vec::with_capacity(nb);
+    let mut sa_s = Vec::with_capacity(nb);
+    let mut sb_s = Vec::with_capacity(nb);
+    {
+        let (mut tr, mut hr) = (&mut tris[..], &mut he[..]);
+        let mut sa = &mut seg_above[..];
+        let (_, mut sb) = seg_below.split_at_mut(rows[1] - rows[0] - 1);
+        for b in 0..nb {
+            let len = 3 * (toff[b + 1] - toff[b]);
+            let (x, rest) = tr.split_at_mut(len);
+            tri_s.push(x);
+            tr = rest;
+            let (x, rest) = hr.split_at_mut(len);
+            he_s.push(x);
+            hr = rest;
+            let (x, rest) = sa.split_at_mut(rows[b + 1] - rows[b] - 1);
+            sa_s.push(x);
+            sa = rest;
+            let (x, rest) = sb.split_at_mut(rows[b + 2] - rows[b + 1] - 1);
+            sb_s.push(x);
+            sb = rest;
+        }
+    }
+
+    let bounds: Vec<(u32, u32)> = tri_s
+        .into_par_iter()
+        .zip(he_s)
+        .zip(sa_s)
+        .zip(sb_s)
+        .enumerate()
+        .map(|(b, (((tri, he), sa), sb))| {
+            let base = 3 * toff[b];
+            let (l0, l1, u1) = (rows[b], rows[b + 1], rows[b + 2]);
+            let (nl, nu) = (l1 - l0, u1 - l1);
+            let (mut i, mut j) = (0usize, 0usize);
+            let mut prev = EMPTY;
+            let mut lt = 0usize;
+            while i + 1 < nl || j + 1 < nu {
+                let lower = j + 1 == nu || (i + 1 < nl && q[l0 + i + 1][0] <= q[l1 + j + 1][0]);
+                let g = (base + lt) as u32;
+                if lower {
+                    tri[lt..lt + 3].copy_from_slice(&[
+                        (l0 + i) as u32,
+                        (l0 + i + 1) as u32,
+                        (l1 + j) as u32,
+                    ]);
+                    sa[i] = g;
+                    i += 1;
+                } else {
+                    tri[lt..lt + 3].copy_from_slice(&[
+                        (l0 + i) as u32,
+                        (l1 + j + 1) as u32,
+                        (l1 + j) as u32,
+                    ]);
+                    sb[j] = g + 1;
+                    j += 1;
+                }
+                he[lt + 2] = prev;
+                if prev != EMPTY {
+                    he[prev as usize - base] = g + 2;
+                }
+                prev = if lower { g + 1 } else { g };
+                lt += 3;
+            }
+            (base as u32 + 2, prev)
+        })
+        .collect();
+
+    {
+        let mut hr = &mut he[..];
+        let mut he_s = Vec::with_capacity(nb);
+        for b in 0..nb {
+            let (x, rest) = hr.split_at_mut(3 * (toff[b + 1] - toff[b]));
+            he_s.push(x);
+            hr = rest;
+        }
+        let (seg_above, seg_below) = (&seg_above, &seg_below);
+        he_s.into_par_iter().enumerate().for_each(|(b, hb)| {
+            let base = 3 * toff[b];
+            if b > 0 {
+                for s in rows[b] - b..rows[b + 1] - b - 1 {
+                    hb[seg_above[s] as usize - base] = seg_below[s];
+                }
+            }
+            if b + 1 < nb {
+                for s in rows[b + 1] - b - 1..rows[b + 2] - b - 2 {
+                    hb[seg_below[s] as usize - base] = seg_above[s];
+                }
+            }
+        });
+    }
+
+    let mut stack: Vec<(u32, u32)> = vec![(rows[0] as u32, EMPTY)];
+    for b in 0..nb {
+        let c = rows[b + 1] as u32;
+        let mut e_cb = bounds[b].0;
+        while stack.len() >= 2 {
+            let (bv, e_ba) = stack[stack.len() - 1];
+            let (av, _) = stack[stack.len() - 2];
+            if ccw(q[c as usize], q[bv as usize], q[av as usize]) >= 0.0 {
+                break;
+            }
+            let t = push_tri(&mut tris, &mut he, [av, bv, c], 0, e_ba);
+            link_he(&mut he, t + 1, e_cb);
+            e_cb = (t + 2) as u32;
+            stack.pop();
+        }
+        stack.push((c, e_cb));
+    }
+    stack.clear();
+    stack.push(((rows[1] - 1) as u32, EMPTY));
+    for b in 0..nb {
+        let c = (rows[b + 2] - 1) as u32;
+        let mut e_bc = bounds[b].1;
+        while stack.len() >= 2 {
+            let (bv, e_ab) = stack[stack.len() - 1];
+            let (av, _) = stack[stack.len() - 2];
+            if ccw(q[av as usize], q[bv as usize], q[c as usize]) >= 0.0 {
+                break;
+            }
+            let t = push_tri(&mut tris, &mut he, [av, c, bv], 1, e_bc);
+            link_he(&mut he, t + 2, e_ab);
+            e_bc = t as u32;
+            stack.pop();
+        }
+        stack.push((c, e_bc));
+    }
+
+    let pocket = 3 * nt_band as u32;
+    let mut todo: Vec<u32> = (0..nb)
+        .into_par_iter()
+        .with_min_len(8)
+        .flat_map_iter(|b| {
+            let (tris, he) = (&tris, &he);
+            let (lo, hi) = (3 * toff[b], 3 * toff[b + 1]);
+            let l1 = rows[b + 1] as u32;
+            let only_rows = rect[b];
+            (lo..hi)
+                .filter(move |&e| {
+                    let tw = he[e];
+                    if tw == EMPTY || (tw < pocket && (tw as usize) < e) {
+                        return false;
+                    }
+                    if only_rows && tw < pocket {
+                        let t = e - e % 3;
+                        let row_edge = if tris[t + 1] < l1 { t } else { t + 1 };
+                        if e != row_edge {
+                            return false;
+                        }
+                    }
+                    edge_illegal(q, tris, he, e)
+                })
+                .map(|e| e as u32)
+        })
+        .collect();
+    todo.extend((pocket..tris.len() as u32).filter(|&e| {
+        let tw = he[e as usize];
+        tw != EMPTY && (tw < pocket || tw > e)
+    }));
+
+    let budget = 4 * n + 1024;
+    if !lawson(q, &mut tris, &mut he, &mut todo, budget) {
+        return None;
+    }
+    Some(tris)
+}
+
+#[allow(clippy::float_cmp)]
+fn triangulate_row_grid(pts: &[Pt]) -> Option<Vec<u32>> {
+    let g = row_grid(pts)?;
+    let q: &[Pt] = &g.q;
+    let rows = &g.rows;
+    let rect: Vec<bool> = (0..rows.len() - 2)
+        .into_par_iter()
+        .with_min_len(8)
+        .map(|b| {
+            let lower = &q[rows[b]..rows[b + 1]];
+            let upper = &q[rows[b + 1]..rows[b + 2]];
+            lower.len() == upper.len() && lower.iter().zip(upper).all(|(l, u)| l[0] == u[0])
+        })
+        .collect();
+    if rect.iter().all(|&r| r) {
+        return Some(tensor_triangles(rows, g.flip));
+    }
+    let mut tris = zipper_lawson(q, rows, &rect)?;
+    if g.flip {
+        tris.par_chunks_mut(3)
+            .with_min_len(4096)
+            .for_each(|t| t.swap(1, 2));
+    }
+    Some(tris)
+}
+
 #[must_use]
 pub fn triangulate(pts: &[Pt]) -> Vec<u32> {
+    if let Some(tris) = triangulate_row_grid(pts) {
+        return tris;
+    }
     if pts.len() >= PARALLEL_MIN_N {
         if let Some(tris) = triangulate_parallel(pts) {
             return tris;
@@ -1281,9 +1679,104 @@ fn _triangular(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{hull_edges, triangulate};
+    use super::{ccw, hull_edges, in_circle, triangulate, triangulate_seq, Pt};
 
     const PTS: [[f64; 2]; 5] = [[0.0, 0.0], [0.0, 1.0], [0.5, 0.5], [1.0, 1.0], [1.0, 0.0]];
+
+    fn assert_delaunay(pts: &[Pt], tris: &[u32]) {
+        assert_eq!(tris.len(), triangulate_seq(pts).len());
+        for t in tris.chunks(3) {
+            let (a, b, c) = (pts[t[0] as usize], pts[t[1] as usize], pts[t[2] as usize]);
+            assert!(ccw(a, b, c) > 0.0);
+            assert!(pts.iter().all(|&p| !in_circle(a, b, c, p)));
+        }
+    }
+
+    fn grid(nu: u32, nv: u32, f: impl Fn(f64, f64) -> Pt) -> Vec<Pt> {
+        (0..nv)
+            .flat_map(|j| (0..nu).map(move |i| (f64::from(i), f64::from(j * j))))
+            .map(|(u, v)| f(u, v))
+            .collect()
+    }
+
+    #[test]
+    fn triangulates_tensor_grids_counter_clockwise_in_every_frame() {
+        let frames: [fn(f64, f64) -> Pt; 6] = [
+            |u, v| [u * 0.5, v],
+            |u, v| [-u * 0.5, v],
+            |u, v| [u * 0.5, 2.0 - v],
+            |u, v| [v, u * 0.5],
+            |u, v| [2.0 - v, u * 0.5],
+            |u, v| [-v, -u * 0.5],
+        ];
+        for f in frames {
+            let pts = grid(7, 5, f);
+            let tris = triangulate(&pts);
+            assert_eq!(tris.len(), 3 * 2 * 6 * 4);
+            assert_delaunay(&pts, &tris);
+        }
+    }
+
+    #[test]
+    fn triangulates_reduced_row_grids_counter_clockwise_in_every_frame() {
+        let counts = [3u32, 7, 12, 12, 16, 12, 5, 4];
+        let rows: Vec<Pt> = counts
+            .iter()
+            .enumerate()
+            .flat_map(|(r, &c)| {
+                let start = if r == 0 || r == 6 { -1.5 } else { 0.0 };
+                (0..c).map(move |k| [start + f64::from(k) * 30.0 / f64::from(c), -0.4 * r as f64])
+            })
+            .collect();
+        let frames: [fn(Pt) -> Pt; 4] = [
+            |p| p,
+            |p| [-p[0], p[1]],
+            |p| [p[1], p[0]],
+            |p| [-p[1], -p[0]],
+        ];
+        for f in frames {
+            let pts: Vec<Pt> = rows.iter().map(|&p| f(p)).collect();
+            assert_delaunay(&pts, &triangulate(&pts));
+        }
+    }
+
+    #[test]
+    fn subnormal_row_grids_use_the_general_path() {
+        let cases: [&[Pt]; 3] = [
+            &[
+                [5e-324, 5e-324],
+                [1.0, 5e-324],
+                [0.0, 0.5],
+                [1.0, 0.5],
+                [2.0, 0.5],
+            ],
+            &[
+                [1.5e-323, 0.0],
+                [0.3, 0.0],
+                [0.0, 0.5],
+                [0.3, 0.5],
+                [0.0, 1.0],
+                [0.5, 1.0],
+            ],
+            &[
+                [1e-323, 5e-324],
+                [0.5, 5e-324],
+                [1.0, 5e-324],
+                [0.0, 0.25],
+                [0.3, 0.25],
+                [0.6, 0.25],
+                [0.899_999_999_999_999_9, 0.25],
+                [1e-323, 0.5],
+                [1.0, 0.5],
+                [1.5e-323, 0.75],
+                [0.5, 0.75],
+                [1.0, 0.75],
+            ],
+        ];
+        for pts in cases {
+            assert_eq!(triangulate(pts), triangulate_seq(pts));
+        }
+    }
 
     #[test]
     fn triangulates_readme_example() {
