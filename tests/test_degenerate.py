@@ -4,7 +4,13 @@ from types import ModuleType
 
 import numpy as np
 import pytest
-from _compare import assert_valid_delaunay, run_in_subprocess
+from _compare import (
+    assert_valid_convex_hull,
+    assert_valid_delaunay,
+    canonical_edges,
+    canonical_tris,
+    run_in_subprocess,
+)
 from conftest import IMPL_NAME, IS_REFERENCE
 
 LOW_VERTEX_MSG = "Input must have at least three vertices."
@@ -127,6 +133,32 @@ def test_duplicate_points_convex_hull_succeeds(impl: ModuleType) -> None:
     assert result.shape[0] >= 1
     assert int(result.min()) >= 0
     assert int(result.max()) < len(pts)
+
+
+@pytest.mark.improvement
+@pytest.mark.degenerate
+def test_signed_zero_convex_hull_matches_positive_zero(impl: ModuleType) -> None:
+    pts = np.array(
+        [[-0.0, 1.0], [0.0, 0.0], [1.0, 0.0], [-0.0, 0.5], [0.0, 0.25]],
+        dtype=np.float64,
+    )
+    result = impl.convex_hull(pts)
+    assert_valid_convex_hull(pts, result)
+    assert canonical_edges(result) == canonical_edges(impl.convex_hull(pts + 0.0))
+
+
+@pytest.mark.improvement
+@pytest.mark.degenerate
+def test_signed_zero_delaunay_parallel_path_has_no_duplicate_sites(
+    impl: ModuleType,
+) -> None:
+    # Above 50k points the parallel path runs; -0.0 and 0.0 must dedup as one site.
+    x, y = np.meshgrid(np.arange(173.0) - 86.0, np.arange(173.0) - 86.0)
+    grid = np.column_stack([x.ravel(), y.ravel()])
+    pts = np.vstack([grid, np.where(grid == 0.0, -0.0, grid)])
+    result = impl.delaunay(pts)
+    assert_valid_delaunay(pts, result)
+    assert canonical_tris(result) == canonical_tris(impl.delaunay(pts + 0.0))
 
 
 def _regular_polygon(n: int) -> np.ndarray:
