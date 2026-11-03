@@ -1,14 +1,36 @@
 version: 2
 updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      # numpy pins a matching pyo3, so they move together.
+      pyo3:
+        patterns: [pyo3, numpy]
+      cargo:
+        update-types: [minor, patch]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     cooldown:
       default-days: 14
+    groups:
+      actions:
+        update-types: [minor, patch]
   - package-ecosystem: uv
     directory: /
     schedule:
       interval: weekly
     cooldown:
       default-days: 14
+    groups:
+      uv:
+        update-types: [minor, patch]
+  - package-ecosystem: rust-toolchain
+    directory: /
+    schedule:
+      interval: weekly
