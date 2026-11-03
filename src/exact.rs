@@ -268,11 +268,52 @@ pub fn incircle(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> Option<f6
         & in_range(ady)
         & in_range(bdy)
         & in_range(cdy);
-    if !(exact && ranged) {
-        return None;
+    if exact && ranged {
+        let d = [adx, bdx, cdx, ady, bdy, cdy];
+        return Some(scaled_ints(d).map_or_else(|| incircle_expansion(d), incircle_int));
     }
-    let d = [adx, bdx, cdx, ady, bdy, cdy];
-    Some(scaled_ints(d).map_or_else(|| incircle_expansion(d), incircle_int))
+    coordinate_ints([a, b, c, d]).map(incircle_int)
+}
+
+// Handles inexact float differences: in units of the finest coordinate bit, the differences are exact integers.
+fn coordinate_ints(p: [[f64; 2]; 4]) -> Option<[i64; 6]> {
+    let mut parts = [(0i64, i32::MAX); 8];
+    for (part, &v) in parts.iter_mut().zip(p.as_flattened()) {
+        if !in_range(v) {
+            return None;
+        }
+        if v != 0.0 {
+            let bits = v.to_bits();
+            let m = (bits & ((1 << 52) - 1)) | (1 << 52);
+            let tz = m.trailing_zeros();
+            let mag = (m >> tz) as i64;
+            let lsb = ((bits >> 52) & 0x7ff) as i32 - 1075 + tz as i32;
+            *part = (if v < 0.0 { -mag } else { mag }, lsb);
+        }
+    }
+    let emin = parts.iter().map(|&(_, e)| e).min().unwrap_or(i32::MAX);
+    let mut ints = [0i128; 8];
+    for (int, &(m, e)) in ints.iter_mut().zip(&parts) {
+        if m != 0 {
+            let shift = e - emin;
+            if shift > 72 {
+                return None;
+            }
+            *int = i128::from(m) << shift;
+        }
+    }
+    let mut out = [0i64; 6];
+    for (k, o) in out.iter_mut().enumerate() {
+        let (i, j) = if k < 3 {
+            (2 * k, 6)
+        } else {
+            (2 * (k - 3) + 1, 7)
+        };
+        *o = i64::try_from(ints[i] - ints[j])
+            .ok()
+            .filter(|v| v.unsigned_abs() < 1 << 62)?;
+    }
+    Some(out)
 }
 
 fn incircle_expansion([adx, bdx, cdx, ady, bdy, cdy]: [f64; 6]) -> f64 {
@@ -294,7 +335,9 @@ fn incircle_expansion([adx, bdx, cdx, ady, bdy, cdy]: [f64; 6]) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{incircle, incircle_expansion, incircle_int, scaled_ints};
+    use super::{
+        coordinate_ints, diff_is_exact, incircle, incircle_expansion, incircle_int, scaled_ints,
+    };
     use robust::Coord;
 
     fn rng(seed: u64) -> impl FnMut() -> f64 {
@@ -316,7 +359,7 @@ mod tests {
         sign(robust::incircle(c(p[0]), c(p[1]), c(p[2]), c(p[3])))
     }
 
-    fn check(p: [[f64; 2]; 4], hits: &mut [usize; 3]) {
+    fn check(p: [[f64; 2]; 4], hits: &mut [usize; 4]) {
         let Some(got) = incircle(p[0], p[1], p[2], p[3]) else {
             return;
         };
@@ -330,8 +373,19 @@ mod tests {
             p[1][1] - p[3][1],
             p[2][1] - p[3][1],
         ];
-        assert_eq!(sign(incircle_expansion(d)), want, "{p:?}");
-        if let Some(v) = scaled_ints(d) {
+        let exact = (0..6).all(|k| {
+            let (i, j) = if k < 3 { (k, 0) } else { (k - 3, 1) };
+            diff_is_exact(p[i][j], p[3][j], d[k])
+        });
+        if exact {
+            assert_eq!(sign(incircle_expansion(d)), want, "{p:?}");
+            if let Some(v) = scaled_ints(d) {
+                assert_eq!(sign(incircle_int(v)), want, "{p:?}");
+            }
+        } else {
+            hits[3] += 1;
+        }
+        if let Some(v) = coordinate_ints(p) {
             assert_eq!(sign(incircle_int(v)), want, "{p:?}");
         }
         hits[(want + 1) as usize] += 1;
@@ -340,7 +394,7 @@ mod tests {
     #[test]
     fn matches_robust_on_grids_and_near_degenerate_points() {
         let mut r = rng(7);
-        let mut hits = [0usize; 3];
+        let mut hits = [0usize; 4];
         for round in 0..200_000 {
             let scale = [0.25, 1.0, 1e-3, 360.0 / 1279.0, 1e9, 3e-90][round % 6];
             let off = [0.0, 180.0, -90.0, 1e6, 0.5][(round / 6) % 5];
@@ -360,6 +414,12 @@ mod tests {
                 [cx + rad * t.cos(), cy + rad * t.sin()]
             };
             check([on(), on(), on(), on()], &mut hits);
+
+            let mut across = || {
+                let k = [1e-3, 0.3, 7.0][round % 3];
+                [(r() - 0.5) * k + [0.0, 360.0][round % 2], (r() - 0.5) * k]
+            };
+            check([across(), across(), across(), across()], &mut hits);
 
             let base = [r() * 400.0 - 200.0, r() * 400.0 - 200.0];
             let mut near = || {
