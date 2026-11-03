@@ -34,6 +34,7 @@ const STRIP_TARGET_PTS: usize = 4096;
 // A planar graph on k sites has at most 3k edges, so 3 quad edges per site never run out.
 const QUAD_SLOTS: usize = 12;
 const BUCKETS_PER_STRIP: usize = 16;
+const AXIS_SAMPLE: usize = 4096;
 const GRID_COLUMN_MIN_PTS: usize = 128;
 // Uniform input flips about 3 times per point. Rows of collinear points flip 30 or more times,
 // and divide and conquer is faster on them.
@@ -731,7 +732,35 @@ fn bucketed_sites(pts: &[Pt], nstrips: usize) -> Option<Sites> {
     Some((spts, ids, ranges))
 }
 
+// Strips are cut across x, so on tall input they become slivers and merge seams cross most sites.
+// Mirror such input across y = x first.
 fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
+    if !taller_than_wide(pts) {
+        return triangulate_strips(pts);
+    }
+    let mirrored: Vec<Pt> = pts.par_iter().map(|&[x, y]| [y, x]).collect();
+    let mut tris = triangulate_strips(&mirrored)?;
+    // The mirror reverses orientation, and predicates negate exactly under it, so a swap restores CCW.
+    tris.par_chunks_mut(3).for_each(|t| t.swap(1, 2));
+    Some(tris)
+}
+
+// Use interdecile spans of a strided sample, so that a few outliers do not set the cut axis.
+fn taller_than_wide(pts: &[Pt]) -> bool {
+    let step = (pts.len() / AXIS_SAMPLE).max(1);
+    let (mut xs, mut ys): (Vec<f64>, Vec<f64>) =
+        pts.iter().step_by(step).map(|p| (p[0], p[1])).unzip();
+    interdecile_span(&mut ys) > interdecile_span(&mut xs)
+}
+
+fn interdecile_span(v: &mut [f64]) -> f64 {
+    let k = v.len() / 10;
+    let hi = *v.select_nth_unstable_by(v.len() - 1 - k, f64::total_cmp).1;
+    let lo = *v.select_nth_unstable_by(k, f64::total_cmp).1;
+    hi - lo
+}
+
+fn triangulate_strips(pts: &[Pt]) -> Option<Vec<u32>> {
     let (spts, ids, ranges) =
         bucketed_sites(pts, strip_count(pts.len())).unwrap_or_else(|| sorted_sites(pts));
     let m: usize = ranges.iter().map(|&(lo, hi)| hi - lo).sum();

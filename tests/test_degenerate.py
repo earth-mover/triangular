@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import itertools
+import os
+import subprocess
+import sys
 from fractions import Fraction
 from types import ModuleType
 
 import numpy as np
 import pytest
-from _compare import assert_valid_delaunay, run_in_subprocess
+from _compare import assert_valid_delaunay, canonical_tris, run_in_subprocess
 from conftest import IMPL_NAME, IS_REFERENCE
 
 LOW_VERTEX_MSG = "Input must have at least three vertices."
@@ -261,3 +264,54 @@ def test_in_circle_exact_when_scaled_offset_underflows(
             a, b, c = (pts[i] for i in tri)
             inside = _exact_orient(a, b, c) * _exact_in_circle(a, b, c, pts[other])
             assert inside <= 0, f"order {perm}: point {other} is inside triangle {tri}"
+
+
+def _tall_with_outlier(n: int, width: float) -> np.ndarray:
+    u = np.random.default_rng(8).uniform(0.0, 1.0, (n, 2)) * [width, 1.0]
+    return np.vstack([u, [[1.0, 0.5]]])
+
+
+@pytest.mark.invariant
+@pytest.mark.parametrize("threads", _THREAD_COUNTS)
+def test_tall_input_matches_its_transpose(threads: str) -> None:
+    tall = _tall_with_outlier(30_000, 1e-6)
+    wide = tall[:, ::-1].copy()
+    tris = _delaunay_with_threads(tall, threads)
+    assert_valid_delaunay(tall, tris)
+    assert canonical_tris(tris) == canonical_tris(_delaunay_with_threads(wide, threads))
+
+
+_ASPECT_TIMER = """
+import sys, time
+import numpy as np
+mod = __import__(sys.argv[1])
+u = np.random.default_rng(8).uniform(0.0, 1.0, (1_000_000, 2)) * [1e-6, 1.0]
+tall = np.vstack([u, [[1.0, 0.5]]])
+best = []
+for p in (tall, tall[:, ::-1].copy()):
+    mod.delaunay(p)
+    ts = []
+    for _ in range(3):
+        t0 = time.perf_counter()
+        mod.delaunay(p)
+        ts.append(time.perf_counter() - t0)
+    best.append(min(ts))
+print(best[0] / best[1])
+"""
+
+
+# Strips cut across the short side of the input make every merge seam cross most sites.
+@pytest.mark.slow
+@pytest.mark.parametrize("threads", ["2", "3"])
+def test_tall_input_is_not_slower_than_its_transpose(threads: str) -> None:
+    env = dict(os.environ) | {"RAYON_NUM_THREADS": threads}
+    proc = subprocess.run(
+        [sys.executable, "-c", _ASPECT_TIMER, IMPL_NAME],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env=env,
+        check=True,
+    )
+    ratio = float(proc.stdout.strip())
+    assert ratio < 2.0, f"tall input took {ratio:.2f}x the time of its transpose"
