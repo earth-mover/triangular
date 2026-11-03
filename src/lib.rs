@@ -22,6 +22,8 @@ use robust::{incircle, orient2d, Coord};
 #[cfg(feature = "python")]
 use std::borrow::Cow;
 
+mod exact;
+
 const EMPTY: u32 = u32::MAX;
 
 const PARALLEL_MIN_N: usize = 50_000;
@@ -89,7 +91,13 @@ fn in_circle(a: Pt, b: Pt, c: Pt, p: Pt) -> bool {
     if -det > errbound {
         return false;
     }
-    incircle(co(a), co(b), co(c), co(p)) > 0.0
+    in_circle_slow(a, b, c, p)
+}
+
+#[cold]
+#[inline(never)]
+fn in_circle_slow(a: Pt, b: Pt, c: Pt, p: Pt) -> bool {
+    exact::incircle(a, b, c, p).unwrap_or_else(|| incircle(co(a), co(b), co(c), co(p))) > 0.0
 }
 
 #[inline]
@@ -493,38 +501,48 @@ pub fn triangulate(pts: &[Pt]) -> Vec<u32> {
     triangulate_seq(pts)
 }
 
-fn dedup_sorted_sites(pts: &[Pt]) -> Vec<u32> {
+// Maps an `f64` to an `i64` whose integer order matches `f64::total_cmp`; the map is its own inverse.
+#[inline]
+fn total_order_key(v: f64) -> i64 {
+    let b = v.to_bits() as i64;
+    b ^ (((b >> 63) as u64) >> 1) as i64
+}
+
+fn dedup_sorted_sites(pts: &[Pt]) -> (Vec<u32>, Vec<Pt>) {
     let n = pts.len();
-    let mut order: Vec<u32> = (0..n as u32).collect();
-    order.par_sort_unstable_by(|&a, &b| {
-        pts[a as usize][0]
-            .total_cmp(&pts[b as usize][0])
-            .then(pts[a as usize][1].total_cmp(&pts[b as usize][1]))
-            .then(a.cmp(&b))
-    });
+    let mut keyed: Vec<(i64, i64, u32)> = pts
+        .par_iter()
+        .enumerate()
+        .map(|(i, p)| (total_order_key(p[0]), total_order_key(p[1]), i as u32))
+        .collect();
+    keyed.par_sort_unstable();
     let mut sites: Vec<u32> = Vec::with_capacity(n);
-    for &i in &order {
-        if sites
-            .last()
-            .is_none_or(|&last| !same_point(pts[last as usize], pts[i as usize]))
-        {
+    let mut spts: Vec<Pt> = Vec::with_capacity(n);
+    for &(kx, ky, i) in &keyed {
+        let p = [
+            f64::from_bits(total_order_key(f64::from_bits(kx as u64)) as u64),
+            f64::from_bits(total_order_key(f64::from_bits(ky as u64)) as u64),
+        ];
+        if spts.last().is_none_or(|&last| !same_point(last, p)) {
             sites.push(i);
+            spts.push(p);
         }
     }
-    sites
+    (sites, spts)
 }
 
 fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
-    let sites = dedup_sorted_sites(pts);
+    let (sites, spts) = dedup_sorted_sites(pts);
     let m = sites.len();
     if m < 3 {
         return Some(Vec::new());
     }
-    let a = pts[sites[0] as usize];
-    let b = pts[sites[m - 1] as usize];
-    if sites.iter().all(|&i| ccw(a, b, pts[i as usize]) == 0.0) {
+    let a = spts[0];
+    let b = spts[m - 1];
+    if spts.iter().all(|&p| ccw(a, b, p) == 0.0) {
         return Some(Vec::new());
     }
+    let ids: Vec<u32> = (0..m as u32).collect();
 
     let nstrips = strip_count(m);
     if nstrips < 2 {
@@ -540,8 +558,8 @@ fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
     let parts: Vec<StripResult> = ranges
         .par_iter()
         .map(|&(lo, hi)| {
-            let strip = &sites[lo..hi];
-            let mut qe = QuadEdge::with_capacity(pts, 3 * strip.len());
+            let strip = &ids[lo..hi];
+            let mut qe = QuadEdge::with_capacity(&spts, 3 * strip.len());
             let (ldo, rdo) = qe.delaunay(strip)?;
             Some((qe.onext, qe.data, ldo, rdo))
         })
@@ -551,7 +569,7 @@ fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
     let merge_headroom = (total / 4).max(1024);
     let mut handles: Vec<(u32, u32)> = Vec::with_capacity(parts.len());
     let mut combined = QuadEdge {
-        pts,
+        pts: &spts,
         onext: Vec::with_capacity(total + merge_headroom),
         data: Vec::with_capacity(total + merge_headroom),
         free: Vec::new(),
@@ -573,6 +591,7 @@ fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
 
     let mut out = Vec::with_capacity(6 * m);
     extract_triangles(&combined, &mut out);
+    out.par_iter_mut().for_each(|v| *v = sites[*v as usize]);
     Some(out)
 }
 
