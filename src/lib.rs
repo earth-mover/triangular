@@ -826,7 +826,8 @@ impl QuadEdge<'_> {
                 return None;
             }
             let mut lcand = self.onext(Self::sym(basel));
-            if self.valid(lcand, basel) {
+            let mut l_valid = self.valid(lcand, basel);
+            if l_valid {
                 let mut g = 0usize;
                 while self.in_circle_e(
                     self.dest(basel),
@@ -842,10 +843,14 @@ impl QuadEdge<'_> {
                         return None;
                     }
                 }
+                if g > 0 {
+                    l_valid = self.valid(lcand, basel);
+                }
             }
 
             let mut rcand = self.oprev(basel);
-            if self.valid(rcand, basel) {
+            let mut r_valid = self.valid(rcand, basel);
+            if r_valid {
                 let mut g = 0usize;
                 while self.in_circle_e(
                     self.dest(basel),
@@ -861,10 +866,11 @@ impl QuadEdge<'_> {
                         return None;
                     }
                 }
+                if g > 0 {
+                    r_valid = self.valid(rcand, basel);
+                }
             }
 
-            let l_valid = self.valid(lcand, basel);
-            let r_valid = self.valid(rcand, basel);
             if !l_valid && !r_valid {
                 break;
             }
