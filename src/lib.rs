@@ -589,10 +589,7 @@ fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
     }
     let _ = acc_ldo;
 
-    let mut out = Vec::with_capacity(6 * m);
-    extract_triangles(&combined, &mut out);
-    out.par_iter_mut().for_each(|v| *v = sites[*v as usize]);
-    Some(out)
+    Some(extract_triangles(&combined, &sites))
 }
 
 fn strip_count(m: usize) -> usize {
@@ -926,39 +923,42 @@ impl QuadEdge<'_> {
     }
 }
 
-fn extract_triangles(qe: &QuadEdge<'_>, out: &mut Vec<u32>) {
-    let mut seen = vec![false; qe.onext.len()];
+// Emits each face from its lowest-numbered edge, which is the edge a serial scan meets first.
+// That keeps the serial output order with no shared `seen` state, so the scan runs in parallel.
+fn extract_triangles(qe: &QuadEdge<'_>, sites: &[u32]) -> Vec<u32> {
+    let mut dead = vec![false; qe.onext.len() / 4];
     for &slot in &qe.free {
-        seen[slot as usize] = true;
-        seen[QuadEdge::sym(slot) as usize] = true;
+        dead[slot as usize / 4] = true;
     }
-    for start in (0..qe.onext.len() as u32).step_by(4) {
-        if qe.org(start) == EMPTY {
-            continue;
-        }
-        for e0 in [start, QuadEdge::sym(start)] {
-            if seen[e0 as usize] {
-                continue;
+    let chunks: Vec<Vec<u32>> = dead
+        .par_chunks(4096)
+        .enumerate()
+        .map(|(c, chunk)| {
+            let mut out = Vec::with_capacity(6 * chunk.len());
+            for (k, &is_dead) in chunk.iter().enumerate() {
+                let start = ((c * 4096 + k) * 4) as u32;
+                if is_dead || qe.org(start) == EMPTY {
+                    continue;
+                }
+                for e0 in [start, QuadEdge::sym(start)] {
+                    let e1 = qe.lnext(e0);
+                    let e2 = qe.lnext(e1);
+                    if e1 < e0 || e2 < e0 || qe.lnext(e2) != e0 {
+                        continue;
+                    }
+                    let a = qe.org(e0);
+                    let b = qe.org(e1);
+                    let c = qe.org(e2);
+                    if ccw(qe.p(a), qe.p(b), qe.p(c)) <= 0.0 {
+                        continue;
+                    }
+                    out.extend_from_slice(&[sites[a as usize], sites[b as usize], sites[c as usize]]);
+                }
             }
-            let e1 = qe.lnext(e0);
-            let e2 = qe.lnext(e1);
-            if qe.lnext(e2) != e0 {
-                continue;
-            }
-            let a = qe.org(e0);
-            let b = qe.org(e1);
-            let c = qe.org(e2);
-            if ccw(qe.p(a), qe.p(b), qe.p(c)) <= 0.0 {
-                continue;
-            }
-            seen[e0 as usize] = true;
-            seen[e1 as usize] = true;
-            seen[e2 as usize] = true;
-            out.push(a);
-            out.push(b);
-            out.push(c);
-        }
-    }
+            out
+        })
+        .collect();
+    chunks.concat()
 }
 
 #[allow(clippy::float_cmp)]
