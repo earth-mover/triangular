@@ -29,10 +29,14 @@ const EMPTY: u32 = u32::MAX;
 const PARALLEL_MIN_N: usize = 50_000;
 
 const STRIP_MIN_PTS: usize = 1024;
-const GRID_HULL_MIN_N: usize = 100_000;
-const GRID_HULL_MIN_ROWS: usize = 16;
-const GRID_CLOSE_REL: f64 = 1e-10;
-const GRID_CLOSE_ABS: f64 = 1e-4;
+const HULL_FILTER_MIN_N: usize = 64;
+const HULL_SCAN_CHUNK: usize = 16_384;
+const EXTREME_BLOCK: usize = 1024;
+const BOUNDS_LANES: usize = 4;
+const EXTREME_SAMPLE: usize = 16_384;
+const UNDERFLOW_SLACK: f64 = 1e-300;
+const SAFE_MIN_ABS: f64 = 1e-100;
+const SAFE_MAX_ABS: f64 = 1e100;
 
 const PRED_EPSILON: f64 = f64::EPSILON * 0.5;
 const CCW_ERRBOUND_A: f64 = (3.0 + 16.0 * PRED_EPSILON) * PRED_EPSILON;
@@ -150,79 +154,6 @@ fn pseudo_angle(dx: f64, dy: f64) -> f64 {
     } else {
         (1.0 + p) / 4.0
     }
-}
-
-#[inline]
-fn close_grid_value(left: f64, right: f64) -> bool {
-    (left - right).abs()
-        <= GRID_CLOSE_ABS.max(GRID_CLOSE_REL * left.abs().max(right.abs()).max(1.0))
-}
-
-fn ordered_longitude_grid_rows(pts: &[Pt]) -> Option<Vec<(usize, usize)>> {
-    if pts.len() < GRID_HULL_MIN_N {
-        return None;
-    }
-
-    let mut rows = Vec::new();
-    let mut row_start = 0usize;
-    let mut previous_y = None;
-    let mut lat_direction = 0i8;
-    while row_start < pts.len() {
-        let row_y = pts[row_start][1];
-        if !row_y.is_finite() {
-            return None;
-        }
-        if let Some(last_y) = previous_y {
-            if close_grid_value(row_y, last_y) {
-                return None;
-            }
-            let row_direction = if row_y > last_y { 1 } else { -1 };
-            if lat_direction == 0 {
-                lat_direction = row_direction;
-            } else if lat_direction != row_direction {
-                return None;
-            }
-        }
-
-        let mut row_end = row_start + 1;
-        while row_end < pts.len() && close_grid_value(pts[row_end][1], row_y) {
-            row_end += 1;
-        }
-        if row_end - row_start < 2 {
-            return None;
-        }
-
-        let first_x = pts[row_start][0];
-        let expected_dx = pts[row_start + 1][0] - first_x;
-        if !(first_x.is_finite() && expected_dx.is_finite() && expected_dx > 0.0) {
-            return None;
-        }
-
-        let mut previous_x = first_x;
-        for point in &pts[row_start + 1..row_end] {
-            let current_x = point[0];
-            if !current_x.is_finite()
-                || current_x <= previous_x
-                || !close_grid_value(current_x - previous_x, expected_dx)
-            {
-                return None;
-            }
-            previous_x = current_x;
-        }
-
-        if !close_grid_value(previous_x + expected_dx, first_x + 360.0) {
-            return None;
-        }
-
-        rows.push((row_start, row_end));
-        previous_y = Some(row_y);
-        row_start = row_end;
-    }
-
-    if rows.len() < GRID_HULL_MIN_ROWS {
-        return None;
-    }
-    Some(rows)
 }
 
 #[inline]
@@ -501,11 +432,17 @@ pub fn triangulate(pts: &[Pt]) -> Vec<u32> {
     triangulate_seq(pts)
 }
 
-// Maps an `f64` to an `i64` whose integer order matches `f64::total_cmp`; the map is its own inverse.
+// Maps an `f64` to an `i64` whose integer order matches `f64::total_cmp`, except that -0.0 and 0.0
+// get the same key. Equal coordinates must sort next to each other, or dedup and the hull chain fail.
 #[inline]
 fn total_order_key(v: f64) -> i64 {
-    let b = v.to_bits() as i64;
+    let b = (v + 0.0).to_bits() as i64;
     b ^ (((b >> 63) as u64) >> 1) as i64
+}
+
+#[inline]
+fn from_total_order_key(k: i64) -> f64 {
+    f64::from_bits((k ^ (((k >> 63) as u64) >> 1) as i64) as u64)
 }
 
 fn dedup_sorted_sites(pts: &[Pt]) -> (Vec<u32>, Vec<Pt>) {
@@ -519,10 +456,7 @@ fn dedup_sorted_sites(pts: &[Pt]) -> (Vec<u32>, Vec<Pt>) {
     let mut sites: Vec<u32> = Vec::with_capacity(n);
     let mut spts: Vec<Pt> = Vec::with_capacity(n);
     for &(kx, ky, i) in &keyed {
-        let p = [
-            f64::from_bits(total_order_key(f64::from_bits(kx as u64)) as u64),
-            f64::from_bits(total_order_key(f64::from_bits(ky as u64)) as u64),
-        ];
+        let p = [from_total_order_key(kx), from_total_order_key(ky)];
         if spts.last().is_none_or(|&last| !same_point(last, p)) {
             sites.push(i);
             spts.push(p);
@@ -986,18 +920,251 @@ fn half_chain(pts: &[Pt], seq: impl Iterator<Item = usize>) -> Vec<usize> {
     chain
 }
 
-fn hull_edges_full(pts: &[Pt]) -> Vec<[i32; 2]> {
-    let n = pts.len();
-    let mut order: Vec<usize> = (0..n).collect();
-    order.sort_unstable_by(|&a, &b| {
-        pts[a][0]
-            .total_cmp(&pts[b][0])
-            .then(pts[a][1].total_cmp(&pts[b][1]))
-            .then(a.cmp(&b))
-    });
+#[derive(Clone, Copy)]
+struct Extremes {
+    lo: [(f64, usize); 4],
+    hi: [(f64, usize); 4],
+}
 
-    let mut uniq: Vec<usize> = Vec::with_capacity(n);
-    for &i in &order {
+#[inline]
+fn extreme_keys(p: Pt) -> [f64; 4] {
+    [p[0], p[1], p[0] + p[1], p[0] - p[1]]
+}
+
+type Bounds = ([f64; 4], [f64; 4]);
+
+#[inline]
+fn widen(lo: &mut [f64; 4], hi: &mut [f64; 4], p: Pt) {
+    let keys = extreme_keys(p);
+    for ((l, h), k) in lo.iter_mut().zip(hi.iter_mut()).zip(keys) {
+        *l = l.min(k);
+        *h = h.max(k);
+    }
+}
+
+fn block_bounds(block: &[Pt]) -> Bounds {
+    let mut acc: [Bounds; BOUNDS_LANES] =
+        [([f64::INFINITY; 4], [f64::NEG_INFINITY; 4]); BOUNDS_LANES];
+    let (groups, rest) = block.as_chunks::<BOUNDS_LANES>();
+    for group in groups {
+        for ((lo, hi), &p) in acc.iter_mut().zip(group) {
+            widen(lo, hi, p);
+        }
+    }
+    let (mut lo, mut hi) = acc[0];
+    for &p in rest {
+        widen(&mut lo, &mut hi, p);
+    }
+    for (l, h) in &acc[1..] {
+        lo = std::array::from_fn(|d| lo[d].min(l[d]));
+        hi = std::array::from_fn(|d| hi[d].max(h[d]));
+    }
+    (lo, hi)
+}
+
+#[allow(clippy::float_cmp)]
+fn locate(block: &[Pt], d: usize, key: f64) -> usize {
+    block
+        .iter()
+        .position(|&p| extreme_keys(p)[d] == key)
+        .unwrap_or(0)
+}
+
+fn scan_extremes(pts: &[Pt], offset: usize) -> Extremes {
+    let mut ex = Extremes {
+        lo: [(f64::INFINITY, offset); 4],
+        hi: [(f64::NEG_INFINITY, offset); 4],
+    };
+    for (c, block) in pts.chunks(EXTREME_BLOCK).enumerate() {
+        let start = offset + c * EXTREME_BLOCK;
+        let (lo, hi) = block_bounds(block);
+        for d in 0..4 {
+            if lo[d] < ex.lo[d].0 {
+                ex.lo[d] = (lo[d], start + locate(block, d, lo[d]));
+            }
+            if hi[d] > ex.hi[d].0 {
+                ex.hi[d] = (hi[d], start + locate(block, d, hi[d]));
+            }
+        }
+    }
+    ex
+}
+
+fn merge_extremes(a: Extremes, b: Extremes) -> Extremes {
+    Extremes {
+        lo: std::array::from_fn(|d| {
+            if b.lo[d].0 < a.lo[d].0 {
+                b.lo[d]
+            } else {
+                a.lo[d]
+            }
+        }),
+        hi: std::array::from_fn(|d| {
+            if b.hi[d].0 > a.hi[d].0 {
+                b.hi[d]
+            } else {
+                a.hi[d]
+            }
+        }),
+    }
+}
+
+fn find_extremes(pts: &[Pt]) -> Extremes {
+    if pts.len() < PARALLEL_MIN_N {
+        return scan_extremes(pts, 0);
+    }
+    pts.par_chunks(HULL_SCAN_CHUNK)
+        .enumerate()
+        .map(|(c, chunk)| scan_extremes(chunk, c * HULL_SCAN_CHUNK))
+        .reduce_with(merge_extremes)
+        .unwrap_or_else(|| scan_extremes(pts, 0))
+}
+
+#[inline]
+fn certainly_left(a: Pt, b: Pt, p: Pt) -> bool {
+    let detleft = (a[0] - p[0]) * (b[1] - p[1]);
+    let detright = (a[1] - p[1]) * (b[0] - p[0]);
+    // Add an absolute slack: the relative bound does not hold when the products underflow.
+    detleft - detright > CCW_ERRBOUND_A * (detleft.abs() + detright.abs()) + UNDERFLOW_SLACK
+}
+
+fn predicate_safe(p: Pt) -> bool {
+    p.iter()
+        .all(|v| *v == 0.0 || (SAFE_MIN_ABS..=SAFE_MAX_ABS).contains(&v.abs()))
+}
+
+#[inline]
+fn in_rect([x_lo, x_hi, y_lo, y_hi]: [f64; 4], p: Pt) -> bool {
+    p[0] > x_lo && p[0] < x_hi && p[1] > y_lo && p[1] < y_hi
+}
+
+struct InteriorTest {
+    ring: Vec<Pt>,
+    rect: Option<[f64; 4]>,
+}
+
+impl InteriorTest {
+    fn new(pts: &[Pt], ex: &Extremes) -> Option<Self> {
+        let [min_x, min_y, min_s, min_t] = ex.lo.map(|(_, i)| pts[i]);
+        let [max_x, max_y, max_s, max_t] = ex.hi.map(|(_, i)| pts[i]);
+        let octagon = [min_y, max_t, max_x, max_s, max_y, min_t, min_x, min_s];
+        let mut ring: Vec<Pt> = Vec::with_capacity(8);
+        for p in octagon {
+            if ring.last().is_none_or(|&q| !same_point(q, p)) {
+                ring.push(p);
+            }
+        }
+        while ring.len() > 1 && same_point(ring[0], ring[ring.len() - 1]) {
+            ring.pop();
+        }
+        if ring.len() < 3 {
+            return None;
+        }
+
+        let x_lo = min_x[0].max(min_s[0]).max(min_t[0]);
+        let x_hi = max_x[0].min(max_s[0]).min(max_t[0]);
+        let y_lo = min_y[1].max(min_s[1]).max(max_t[1]);
+        let y_hi = max_y[1].min(max_s[1]).min(min_t[1]);
+        let corners = [[x_lo, y_lo], [x_hi, y_lo], [x_hi, y_hi], [x_lo, y_hi]];
+        let k = ring.len();
+        // Use the box only when all corners are in the ring, so its interior is strictly inside the hull.
+        let rect = (x_lo < x_hi
+            && y_lo < y_hi
+            && octagon.iter().chain(&corners).all(|&p| predicate_safe(p))
+            && corners
+                .iter()
+                .all(|&c| (0..k).all(|e| ccw(ring[e], ring[(e + 1) % k], c) >= 0.0)))
+        .then_some([x_lo, x_hi, y_lo, y_hi]);
+        Some(Self { ring, rect })
+    }
+
+    #[inline]
+    fn contains(&self, p: Pt) -> bool {
+        if self.rect.is_some_and(|rect| in_rect(rect, p)) {
+            return true;
+        }
+        let k = self.ring.len();
+        (0..k).all(|e| certainly_left(self.ring[e], self.ring[(e + 1) % k], p))
+    }
+}
+
+fn outside_rect(pts: &[Pt], offset: usize, rect: [f64; 4]) -> Vec<usize> {
+    let mut out = Vec::new();
+    for (c, block) in pts.chunks(64).enumerate() {
+        let mut mask = block
+            .iter()
+            .enumerate()
+            .fold(0u64, |m, (j, &p)| m | (u64::from(!in_rect(rect, p)) << j));
+        while mask != 0 {
+            out.push(offset + c * 64 + mask.trailing_zeros() as usize);
+            mask &= mask - 1;
+        }
+    }
+    out
+}
+
+// Any input points give a valid filter; the sample only sets how many points survive it.
+fn sampled_extremes(pts: &[Pt]) -> Extremes {
+    let stride = (pts.len() / EXTREME_SAMPLE).max(1);
+    let sample: Vec<Pt> = pts.iter().step_by(stride).copied().collect();
+    let ex = scan_extremes(&sample, 0);
+    Extremes {
+        lo: ex.lo.map(|(k, i)| (k, i * stride)),
+        hi: ex.hi.map(|(k, i)| (k, i * stride)),
+    }
+}
+
+fn extremes_of(pts: &[Pt], idx: &[usize]) -> Extremes {
+    if idx.len() == pts.len() {
+        return find_extremes(pts);
+    }
+    let sub: Vec<Pt> = idx.iter().map(|&i| pts[i]).collect();
+    let ex = scan_extremes(&sub, 0);
+    Extremes {
+        lo: ex.lo.map(|(k, i)| (k, idx[i])),
+        hi: ex.hi.map(|(k, i)| (k, idx[i])),
+    }
+}
+
+fn hull_candidates(pts: &[Pt]) -> Vec<usize> {
+    let n = pts.len();
+    if n < HULL_FILTER_MIN_N {
+        return (0..n).collect();
+    }
+    let coarse: Vec<usize> =
+        match InteriorTest::new(pts, &sampled_extremes(pts)).and_then(|t| t.rect) {
+            Some(rect) if n >= PARALLEL_MIN_N => pts
+                .par_chunks(HULL_SCAN_CHUNK)
+                .enumerate()
+                .flat_map_iter(|(c, chunk)| outside_rect(chunk, c * HULL_SCAN_CHUNK, rect))
+                .collect(),
+            Some(rect) => outside_rect(pts, 0, rect),
+            None => (0..n).collect(),
+        };
+    match InteriorTest::new(pts, &extremes_of(pts, &coarse)) {
+        None => coarse,
+        Some(t) if coarse.len() >= PARALLEL_MIN_N => coarse
+            .into_par_iter()
+            .with_min_len(HULL_SCAN_CHUNK)
+            .filter(|&i| !t.contains(pts[i]))
+            .collect(),
+        Some(t) => coarse
+            .into_iter()
+            .filter(|&i| !t.contains(pts[i]))
+            .collect(),
+    }
+}
+
+#[must_use]
+pub fn hull_edges(pts: &[Pt]) -> Vec<[i32; 2]> {
+    let mut keyed: Vec<(i64, i64, usize)> = hull_candidates(pts)
+        .into_iter()
+        .map(|i| (total_order_key(pts[i][0]), total_order_key(pts[i][1]), i))
+        .collect();
+    keyed.sort_unstable();
+
+    let mut uniq: Vec<usize> = Vec::with_capacity(keyed.len());
+    for &(_, _, i) in &keyed {
         if uniq
             .last()
             .is_none_or(|&last| !same_point(pts[last], pts[i]))
@@ -1020,41 +1187,6 @@ fn hull_edges_full(pts: &[Pt]) -> Vec<[i32; 2]> {
     (0..k)
         .map(|i| [hull[i] as i32, hull[(i + 1) % k] as i32])
         .collect()
-}
-
-fn longitude_grid_hull_edges(pts: &[Pt]) -> Option<Vec<[i32; 2]>> {
-    let rows = ordered_longitude_grid_rows(pts)?;
-    let mut candidates = Vec::with_capacity(
-        2 * rows.len() + rows[0].1 - rows[0].0 + rows[rows.len() - 1].1 - rows[rows.len() - 1].0,
-    );
-    for (row_index, &(row_start, row_end)) in rows.iter().enumerate() {
-        candidates.push(row_start);
-        candidates.push(row_end - 1);
-        if row_index == 0 || row_index + 1 == rows.len() {
-            candidates.extend(row_start..row_end);
-        }
-    }
-    candidates.sort_unstable();
-    candidates.dedup();
-
-    let candidate_pts: Vec<Pt> = candidates.iter().map(|&index| pts[index]).collect();
-    let edges = hull_edges_full(&candidate_pts);
-    Some(
-        edges
-            .into_iter()
-            .map(|[left, right]| {
-                [
-                    candidates[left as usize] as i32,
-                    candidates[right as usize] as i32,
-                ]
-            })
-            .collect(),
-    )
-}
-
-#[must_use]
-pub fn hull_edges(pts: &[Pt]) -> Vec<[i32; 2]> {
-    longitude_grid_hull_edges(pts).unwrap_or_else(|| hull_edges_full(pts))
 }
 
 #[cfg(feature = "python")]
