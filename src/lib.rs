@@ -20,6 +20,8 @@ use pyo3::{pyfunction, pymodule, wrap_pyfunction, Bound, PyResult, Python};
 use rayon::prelude::*;
 use robust::{incircle, orient2d, Coord};
 use std::borrow::Cow;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::Relaxed;
 
 mod exact;
 
@@ -40,6 +42,9 @@ const SAFE_MIN_ABS: f64 = 1e-100;
 const SAFE_MAX_ABS: f64 = 1e100;
 const GRID_MIN_ABS: f64 = 1e-30;
 const GRID_MAX_ABS: f64 = 1e30;
+const SCAN_CHUNK: usize = 8192;
+const SAMPLE_WINDOWS: usize = 64;
+const SAMPLE_STEPS: usize = 64;
 
 const PRED_EPSILON: f64 = f64::EPSILON * 0.5;
 const CCW_ERRBOUND_A: f64 = (3.0 + 16.0 * PRED_EPSILON) * PRED_EPSILON;
@@ -633,11 +638,70 @@ fn push_tri(tris: &mut Vec<u32>, he: &mut Vec<u32>, v: [u32; 3], k: usize, twin:
     t
 }
 
+// Sorted random rows zip to about one illegal diagonal in six, and a fan has illegal row edges over most points.
+// Both need about n sequential flips, so a sample of short zipped windows stops them before the full zip.
+fn sample_needs_many_flips(q: &[Pt], rows: &[usize]) -> bool {
+    let windows = (q.len() / (64 * SAMPLE_STEPS)).min(SAMPLE_WINDOWS);
+    if windows < 8 {
+        return false;
+    }
+    let span = rows[rows.len() - 2];
+    let (mut tested, mut illegal) = (0usize, 0usize);
+    let (mut row_tested, mut row_illegal) = (0usize, 0usize);
+    for k in 0..windows {
+        let p = (2 * k + 1) * span / (2 * windows);
+        let b = rows.partition_point(|&r| r <= p) - 1;
+        let (l0, l1, u1) = (rows[b], rows[b + 1], rows[b + 2]);
+        let (nl, nu) = (l1 - l0, u1 - l1);
+        let x = q[p][0];
+        let above = q[l1..u1].partition_point(|u| u[0] < x);
+        if b + 3 < rows.len() && above > 0 && above < nu {
+            let (r2, r3) = (rows[b + 2], rows[b + 3]);
+            let next = q[r2..r3].partition_point(|u| u[0] < x).min(r3 - r2 - 1);
+            row_tested += 1;
+            row_illegal += usize::from(in_circle(
+                q[p],
+                q[l1 + above],
+                q[l1 + above - 1],
+                q[r2 + next],
+            ));
+        }
+        let mut i = (p - l0).min(nl - 2);
+        let mut j = above.saturating_sub(1).min(nu - 2);
+        let mut prev: Option<[Pt; 3]> = None;
+        for _ in 0..SAMPLE_STEPS {
+            if i + 1 == nl && j + 1 == nu {
+                break;
+            }
+            let lower = j + 1 == nu || (i + 1 < nl && q[l0 + i + 1][0] <= q[l1 + j + 1][0]);
+            let (apex, tri) = if lower {
+                (q[l0 + i + 1], [q[l0 + i], q[l0 + i + 1], q[l1 + j]])
+            } else {
+                (q[l1 + j + 1], [q[l0 + i], q[l1 + j + 1], q[l1 + j]])
+            };
+            if let Some([a, b, c]) = prev {
+                tested += 1;
+                illegal += usize::from(in_circle(a, b, c, apex));
+            }
+            prev = Some(tri);
+            if lower {
+                i += 1;
+            } else {
+                j += 1;
+            }
+        }
+    }
+    10 * illegal > tested || 4 * row_illegal > row_tested
+}
+
 // Zip consecutive rows, fill the hull pockets, then flip to Delaunay with Lawson's algorithm.
 // A triangulation of the hull with every edge locally Delaunay is Delaunay.
 #[allow(clippy::too_many_lines)]
 fn zipper_lawson(q: &[Pt], rows: &[usize], rect: &[bool]) -> Option<Vec<u32>> {
     let n = q.len();
+    if sample_needs_many_flips(q, rows) {
+        return None;
+    }
     let nr = rows.len() - 1;
     let nb = nr - 1;
     let mut toff = Vec::with_capacity(nb + 1);
@@ -781,38 +845,54 @@ fn zipper_lawson(q: &[Pt], rows: &[usize], rect: &[bool]) -> Option<Vec<u32>> {
     }
 
     let pocket = 3 * nt_band as u32;
-    let mut todo: Vec<u32> = (0..nb)
+    let ne = 3 * nt_band;
+    // Lawson runs in sequence, so a grid that needs about n flips costs more than the general path.
+    // The grid goes to the general path early when it has many illegal edges or a long flip cascade.
+    let limit = n / 8 + 1024;
+    let found = AtomicUsize::new(0);
+    // Chunks split by edge, not by band, so a grid with few long bands still scans in parallel.
+    let chunks: Option<Vec<Vec<u32>>> = (0..ne.div_ceil(SCAN_CHUNK))
         .into_par_iter()
-        .with_min_len(8)
-        .flat_map_iter(|b| {
-            let (tris, he) = (&tris, &he);
-            let (lo, hi) = (3 * toff[b], 3 * toff[b + 1]);
-            let l1 = rows[b + 1] as u32;
-            let only_rows = rect[b];
-            (lo..hi)
-                .filter(move |&e| {
+        .map(|c| {
+            if found.load(Relaxed) > limit {
+                return None;
+            }
+            let lo = c * SCAN_CHUNK;
+            let mut b = toff.partition_point(|&t| 3 * t <= lo) - 1;
+            let illegal: Vec<u32> = (lo..ne.min(lo + SCAN_CHUNK))
+                .filter(|&e| {
+                    while 3 * toff[b + 1] <= e {
+                        b += 1;
+                    }
                     let tw = he[e];
                     if tw == EMPTY || (tw < pocket && (tw as usize) < e) {
                         return false;
                     }
-                    if only_rows && tw < pocket {
+                    if rect[b] && tw < pocket {
                         let t = e - e % 3;
-                        let row_edge = if tris[t + 1] < l1 { t } else { t + 1 };
+                        let row_edge = if (tris[t + 1] as usize) < rows[b + 1] {
+                            t
+                        } else {
+                            t + 1
+                        };
                         if e != row_edge {
                             return false;
                         }
                     }
-                    edge_illegal(q, tris, he, e)
+                    edge_illegal(q, &tris, &he, e)
                 })
                 .map(|e| e as u32)
+                .collect();
+            (found.fetch_add(illegal.len(), Relaxed) + illegal.len() <= limit).then_some(illegal)
         })
         .collect();
+    let mut todo = chunks?.concat();
+    let budget = 4 * todo.len() + n / 32 + 1024;
     todo.extend((pocket..tris.len() as u32).filter(|&e| {
         let tw = he[e as usize];
         tw != EMPTY && (tw < pocket || tw > e)
     }));
 
-    let budget = 4 * n + 1024;
     if !lawson(q, &mut tris, &mut he, &mut todo, budget) {
         return None;
     }
@@ -1679,7 +1759,9 @@ fn _triangular(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ccw, hull_edges, in_circle, triangulate, triangulate_seq, Pt};
+    use super::{
+        ccw, hull_edges, in_circle, sample_needs_many_flips, triangulate, triangulate_seq, Pt,
+    };
 
     const PTS: [[f64; 2]; 5] = [[0.0, 0.0], [0.0, 1.0], [0.5, 0.5], [1.0, 1.0], [1.0, 0.0]];
 
@@ -1775,6 +1857,43 @@ mod tests {
         ];
         for pts in cases {
             assert_eq!(triangulate(pts), triangulate_seq(pts));
+        }
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn sample_flags_scan_lines_and_fans_but_not_reduced_grids() {
+        let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+        let mut scan: Vec<Pt> = Vec::new();
+        for r in 0..10u32 {
+            let mut xs: Vec<f64> = (0..5000)
+                .map(|_| {
+                    seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                    (seed >> 11) as f64 / (1u64 << 53) as f64
+                })
+                .collect();
+            xs.sort_by(f64::total_cmp);
+            scan.extend(xs.into_iter().map(|x| [x, f64::from(r) * 1e-6]));
+        }
+        let dense = (1..20_000).map(|k| f64::from(k) / 20_000.0);
+        let fan: Vec<Pt> = dense
+            .clone()
+            .map(|x| [x, 0.0])
+            .chain([[0.0, 1e-9], [1.0, 1e-9]])
+            .chain(dense.map(|x| [x, 1.0]))
+            .collect();
+        let reduced: Vec<Pt> = (0..100u32)
+            .flat_map(|r| {
+                let c = 300 + 4 * r.min(99 - r);
+                (0..c).map(move |k| [f64::from(k) / f64::from(c), f64::from(r) * 2e-3])
+            })
+            .collect();
+        for (pts, flagged) in [(&scan, true), (&fan, true), (&reduced, false)] {
+            let mut rows = vec![0usize];
+            rows.extend((1..pts.len()).filter(|&i| pts[i][1] != pts[i - 1][1]));
+            rows.push(pts.len());
+            assert_eq!(sample_needs_many_flips(pts, &rows), flagged);
+            assert_eq!(triangulate(pts).len(), triangulate_seq(pts).len());
         }
     }
 
