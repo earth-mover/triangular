@@ -90,6 +90,12 @@ fn in_circle(a: Pt, b: Pt, c: Pt, p: Pt) -> bool {
     if -det > errbound {
         return false;
     }
+    in_circle_exact(a, b, c, p)
+}
+
+#[cold]
+#[inline(never)]
+fn in_circle_exact(a: Pt, b: Pt, c: Pt, p: Pt) -> bool {
     in_circle_lattice(a, b, c, p).unwrap_or_else(|| incircle(co(a), co(b), co(c), co(p)) > 0.0)
 }
 
@@ -101,8 +107,8 @@ fn exact_diff(a: f64, b: f64) -> Option<f64> {
     ((a - avirt) + (bvirt - b) == 0.0).then_some(x)
 }
 
-// Grid inputs hit the exact path once per point; integer arithmetic avoids the costly adaptive stages.
-#[inline(never)]
+// Grid inputs reach the exact path once per point. Integer arithmetic is faster than the adaptive stages.
+#[inline]
 fn in_circle_lattice(a: Pt, b: Pt, c: Pt, p: Pt) -> Option<bool> {
     let d = [
         exact_diff(a[0], p[0])?,
@@ -292,6 +298,19 @@ fn prev_he(e: usize) -> usize {
     }
 }
 
+fn argmin_key(items: impl Iterator<Item = (usize, f64)>) -> Option<usize> {
+    let mut best = None;
+    let mut best_key = u64::MAX;
+    for (i, v) in items {
+        let k = total_order_key(v);
+        if best.is_none() || k < best_key {
+            best = Some(i);
+            best_key = k;
+        }
+    }
+    best
+}
+
 fn find_seed(pts: &[Pt]) -> Option<(usize, usize, usize)> {
     let n = pts.len();
 
@@ -309,19 +328,21 @@ fn find_seed(pts: &[Pt]) -> Option<(usize, usize, usize)> {
     }
     let bbox_center = [f64::midpoint(minx, maxx), f64::midpoint(miny, maxy)];
 
-    let i0 = (0..n)
-        .min_by(|&a, &b| dist2(bbox_center, pts[a]).total_cmp(&dist2(bbox_center, pts[b])))
-        .unwrap();
+    let i0 = argmin_key((0..n).map(|i| (i, dist2(bbox_center, pts[i]))))?;
     let p0 = pts[i0];
 
-    let i1 = (0..n)
-        .filter(|&i| i != i0 && !same_point(p0, pts[i]))
-        .min_by(|&a, &b| dist2(p0, pts[a]).total_cmp(&dist2(p0, pts[b])))?;
+    let i1 = argmin_key(
+        (0..n)
+            .filter(|&i| i != i0 && !same_point(p0, pts[i]))
+            .map(|i| (i, dist2(p0, pts[i]))),
+    )?;
     let p1 = pts[i1];
 
-    let i2 = (0..n)
-        .filter(|&i| i != i0 && i != i1 && !same_point(p0, pts[i]) && !same_point(p1, pts[i]))
-        .min_by(|&a, &b| circumradius2(p0, p1, pts[a]).total_cmp(&circumradius2(p0, p1, pts[b])))?;
+    let i2 = argmin_key(
+        (0..n)
+            .filter(|&i| i != i0 && i != i1 && !same_point(p0, pts[i]) && !same_point(p1, pts[i]))
+            .map(|i| (i, circumradius2(p0, p1, pts[i]))),
+    )?;
     let p2 = pts[i2];
 
     if circumradius2(p0, p1, p2).is_infinite() {
@@ -648,20 +669,7 @@ fn sweep_local(pts: &[Pt]) -> Option<(Vec<u32>, Vec<u32>)> {
     let (i0, i1, i2) = find_seed(pts)?;
     let center = circumcenter(pts[i0], pts[i1], pts[i2]);
 
-    let mut keyed: Vec<(u64, u32)> = pts
-        .iter()
-        .enumerate()
-        .map(|(i, &p)| (total_order_key(dist2(center, p)), i as u32))
-        .collect();
-    keyed.sort_unstable_by(|&(ka, a), &(kb, b)| {
-        ka.cmp(&kb).then_with(|| {
-            let (pa, pb) = (pts[a as usize], pts[b as usize]);
-            pa[0]
-                .total_cmp(&pb[0])
-                .then_with(|| pa[1].total_cmp(&pb[1]))
-                .then(a.cmp(&b))
-        })
-    });
+    let keyed = sort_by_distance(pts, center);
 
     let mut seed = (0, 0, 0);
     let mut perm: Vec<u32> = Vec::with_capacity(n);
@@ -703,6 +711,52 @@ fn sweep_local(pts: &[Pt]) -> Option<(Vec<u32>, Vec<u32>)> {
         *t = perm[*t as usize];
     }
     Some((triangles, halfedges))
+}
+
+fn sort_by_distance(pts: &[Pt], center: Pt) -> Vec<(u64, u32)> {
+    let n = pts.len();
+    let cmp = |&(ka, a): &(u64, u32), &(kb, b): &(u64, u32)| {
+        ka.cmp(&kb).then_with(|| {
+            let (pa, pb) = (pts[a as usize], pts[b as usize]);
+            pa[0]
+                .total_cmp(&pb[0])
+                .then_with(|| pa[1].total_cmp(&pb[1]))
+                .then(a.cmp(&b))
+        })
+    };
+    let d2: Vec<f64> = pts.iter().map(|&p| dist2(center, p)).collect();
+    let max = d2.iter().fold(0.0f64, |m, &v| m.max(v));
+    let scale = (n - 1) as f64 / max;
+    let mut keyed: Vec<(u64, u32)>;
+    if max.is_finite() && scale.is_finite() {
+        let mut start = vec![0u32; n + 1];
+        for &v in &d2 {
+            start[(v * scale) as usize + 1] += 1;
+        }
+        for b in 0..n {
+            start[b + 1] += start[b];
+        }
+        keyed = vec![(0, 0); n];
+        let mut fill = start.clone();
+        for (i, &v) in d2.iter().enumerate() {
+            let b = (v * scale) as usize;
+            keyed[fill[b] as usize] = (total_order_key(v), i as u32);
+            fill[b] += 1;
+        }
+        for w in start.windows(2) {
+            if w[1] - w[0] > 1 {
+                keyed[w[0] as usize..w[1] as usize].sort_unstable_by(cmp);
+            }
+        }
+    } else {
+        keyed = d2
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| (total_order_key(v), i as u32))
+            .collect();
+        keyed.sort_unstable_by(cmp);
+    }
+    keyed
 }
 
 #[allow(clippy::float_cmp)]
