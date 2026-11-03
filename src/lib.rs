@@ -27,6 +27,7 @@ const EMPTY: u32 = u32::MAX;
 const PARALLEL_MIN_N: usize = 50_000;
 
 const STRIP_MIN_PTS: usize = 1024;
+const GRID_COLUMN_MIN_PTS: usize = 128;
 const GRID_HULL_MIN_N: usize = 100_000;
 const GRID_HULL_MIN_ROWS: usize = 16;
 const GRID_CLOSE_REL: f64 = 1e-10;
@@ -89,7 +90,63 @@ fn in_circle(a: Pt, b: Pt, c: Pt, p: Pt) -> bool {
     if -det > errbound {
         return false;
     }
-    incircle(co(a), co(b), co(c), co(p)) > 0.0
+    in_circle_lattice(a, b, c, p).unwrap_or_else(|| incircle(co(a), co(b), co(c), co(p)) > 0.0)
+}
+
+#[inline]
+fn exact_diff(a: f64, b: f64) -> Option<f64> {
+    let x = a - b;
+    let bvirt = a - x;
+    let avirt = x + bvirt;
+    ((a - avirt) + (bvirt - b) == 0.0).then_some(x)
+}
+
+// Grid inputs hit the exact path once per point; integer arithmetic avoids the costly adaptive stages.
+#[inline(never)]
+fn in_circle_lattice(a: Pt, b: Pt, c: Pt, p: Pt) -> Option<bool> {
+    let d = [
+        exact_diff(a[0], p[0])?,
+        exact_diff(a[1], p[1])?,
+        exact_diff(b[0], p[0])?,
+        exact_diff(b[1], p[1])?,
+        exact_diff(c[0], p[0])?,
+        exact_diff(c[1], p[1])?,
+    ];
+    let m = d.iter().fold(0.0f64, |m, &v| m.max(v.abs()));
+    if m == 0.0 {
+        return Some(false);
+    }
+    let e = ((m.to_bits() >> 52) & 0x7ff) as i32 - 1023;
+    if !(-900..=900).contains(&e) {
+        return None;
+    }
+    let scale = f64::from_bits(((1023 + 29 - e) as u64) << 52);
+    let mut q = [0i128; 6];
+    for (qi, &v) in q.iter_mut().zip(&d) {
+        let s = v * scale;
+        if s.fract() != 0.0 {
+            return None;
+        }
+        *qi = i128::from(s as i64);
+    }
+    let [adx, ady, bdx, bdy, cdx, cdy] = q;
+    let alift = adx * adx + ady * ady;
+    let blift = bdx * bdx + bdy * bdy;
+    let clift = cdx * cdx + cdy * cdy;
+    let det = alift * (bdx * cdy - cdx * bdy)
+        + blift * (cdx * ady - adx * cdy)
+        + clift * (adx * bdy - bdx * ady);
+    Some(det > 0)
+}
+
+#[inline]
+fn total_order_key(v: f64) -> u64 {
+    let bits = v.to_bits();
+    if bits >> 63 == 1 {
+        !bits
+    } else {
+        bits | (1 << 63)
+    }
 }
 
 #[inline]
@@ -539,12 +596,7 @@ fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
 
     let parts: Vec<StripResult> = ranges
         .par_iter()
-        .map(|&(lo, hi)| {
-            let strip = &sites[lo..hi];
-            let mut qe = QuadEdge::with_capacity(pts, 3 * strip.len());
-            let (ldo, rdo) = qe.delaunay(strip)?;
-            Some((qe.onext, qe.data, ldo, rdo))
-        })
+        .map(|&(lo, hi)| strip_quadedge(pts, &sites[lo..hi]))
         .collect::<Option<Vec<StripResult>>>()?;
 
     let total: usize = parts.iter().map(|p| p.0.len()).sum();
@@ -584,34 +636,49 @@ fn strip_count(m: usize) -> usize {
 }
 
 fn triangulate_seq(pts: &[Pt]) -> Vec<u32> {
+    sweep_local(pts).map_or_else(Vec::new, |(triangles, _)| triangles)
+}
+
+fn sweep_local(pts: &[Pt]) -> Option<(Vec<u32>, Vec<u32>)> {
     let n = pts.len();
     if n < 3 {
-        return Vec::new();
+        return None;
     }
 
-    let Some((i0, i1, i2)) = find_seed(pts) else {
-        return Vec::new();
-    };
+    let (i0, i1, i2) = find_seed(pts)?;
     let center = circumcenter(pts[i0], pts[i1], pts[i2]);
 
-    let d2: Vec<f64> = pts.iter().map(|&p| dist2(center, p)).collect();
-    let mut perm: Vec<usize> = (0..n).collect();
-    perm.sort_unstable_by(|&a, &b| {
-        d2[a].total_cmp(&d2[b]).then_with(|| {
-            pts[a][0]
-                .total_cmp(&pts[b][0])
-                .then_with(|| pts[a][1].total_cmp(&pts[b][1]))
+    let mut keyed: Vec<(u64, u32)> = pts
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| (total_order_key(dist2(center, p)), i as u32))
+        .collect();
+    keyed.sort_unstable_by(|&(ka, a), &(kb, b)| {
+        ka.cmp(&kb).then_with(|| {
+            let (pa, pb) = (pts[a as usize], pts[b as usize]);
+            pa[0]
+                .total_cmp(&pb[0])
+                .then_with(|| pa[1].total_cmp(&pb[1]))
                 .then(a.cmp(&b))
         })
     });
 
-    let mut inv = vec![0usize; n];
-    for (new_i, &old_i) in perm.iter().enumerate() {
-        inv[old_i] = new_i;
+    let mut seed = (0, 0, 0);
+    let mut perm: Vec<u32> = Vec::with_capacity(n);
+    let mut permuted: Vec<Pt> = Vec::with_capacity(n);
+    for (new_i, &(_, old_i)) in keyed.iter().enumerate() {
+        let old_i = old_i as usize;
+        if old_i == i0 {
+            seed.0 = new_i;
+        } else if old_i == i1 {
+            seed.1 = new_i;
+        } else if old_i == i2 {
+            seed.2 = new_i;
+        }
+        perm.push(old_i as u32);
+        permuted.push(pts[old_i]);
     }
-    let seed = (inv[i0], inv[i1], inv[i2]);
-
-    let permuted: Vec<Pt> = perm.iter().map(|&i| pts[i]).collect();
+    drop(keyed);
 
     let hash_size = ((n as f64).sqrt().ceil() as usize).next_power_of_two();
     let mut sweep = Sweep {
@@ -627,11 +694,85 @@ fn triangulate_seq(pts: &[Pt]) -> Vec<u32> {
         edge_stack: Vec::new(),
     };
     sweep.run(center, seed);
-    sweep
-        .triangles
-        .iter()
-        .map(|&t| perm[t as usize] as u32)
-        .collect()
+    let Sweep {
+        mut triangles,
+        halfedges,
+        ..
+    } = sweep;
+    for t in &mut triangles {
+        *t = perm[*t as usize];
+    }
+    Some((triangles, halfedges))
+}
+
+#[allow(clippy::float_cmp)]
+fn strip_quadedge(pts: &[Pt], strip: &[u32]) -> Option<StripResult> {
+    let columns = 1 + strip
+        .windows(2)
+        .filter(|w| pts[w[0] as usize][0] != pts[w[1] as usize][0])
+        .count();
+    // Divide and conquer is faster than the sweep on long grid columns.
+    if strip.len() < GRID_COLUMN_MIN_PTS * columns {
+        if let Some(part) = sweep_strip(pts, strip) {
+            return Some(part);
+        }
+    }
+    let mut qe = QuadEdge::with_capacity(pts, 3 * strip.len());
+    let (ldo, rdo) = qe.delaunay(strip)?;
+    Some((qe.onext, qe.data, ldo, rdo))
+}
+
+fn sweep_strip(pts: &[Pt], strip: &[u32]) -> Option<StripResult> {
+    let m = strip.len();
+    let local: Vec<Pt> = strip.iter().map(|&i| pts[i as usize]).collect();
+    let (tris, hes) = sweep_local(&local)?;
+
+    let nh = hes.len();
+    let mut qe_of = vec![0u32; nh];
+    let mut out_hull = vec![EMPTY; m];
+    let mut in_hull = vec![EMPTY; m];
+    let mut nedges = 0u32;
+    let mut hull_len = 0usize;
+    for h in 0..nh {
+        let twin = hes[h];
+        if twin == EMPTY {
+            out_hull[tris[h] as usize] = h as u32;
+            in_hull[tris[next_he(h)] as usize] = h as u32;
+            hull_len += 1;
+        } else if (h as u32) > twin {
+            continue;
+        } else {
+            qe_of[twin as usize] = 4 * nedges + 2;
+        }
+        qe_of[h] = 4 * nedges;
+        nedges += 1;
+    }
+    // A rounding fault can make Sweep drop a vertex. QuadEdge then triangulates the strip.
+    if nh / 3 + hull_len + 2 != 2 * m {
+        return None;
+    }
+
+    let slots = 4 * nedges as usize;
+    let mut onext = vec![0u32; slots];
+    let mut data = vec![EMPTY; slots];
+    for h in 0..nh {
+        let e = qe_of[h];
+        data[e as usize] = strip[tris[h] as usize];
+        onext[e as usize] = QuadEdge::sym(qe_of[prev_he(h)]);
+        onext[QuadEdge::inv_rot(e) as usize] = QuadEdge::inv_rot(qe_of[next_he(h)]);
+        if hes[h] == EMPTY {
+            let s = QuadEdge::sym(e);
+            let w = tris[next_he(h)];
+            data[s as usize] = strip[w as usize];
+            onext[s as usize] = qe_of[out_hull[w as usize] as usize];
+            let back = QuadEdge::sym(qe_of[in_hull[tris[h] as usize] as usize]);
+            onext[QuadEdge::inv_rot(s) as usize] = QuadEdge::inv_rot(back);
+        }
+    }
+
+    let ldo = qe_of[out_hull[0] as usize];
+    let rdo = QuadEdge::sym(qe_of[in_hull[m - 1] as usize]);
+    Some((onext, data, ldo, rdo))
 }
 
 struct QuadEdge<'a> {
