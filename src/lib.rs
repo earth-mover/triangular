@@ -22,6 +22,8 @@ use robust::{incircle, orient2d, Coord};
 #[cfg(feature = "python")]
 use std::borrow::Cow;
 
+mod exact;
+
 const EMPTY: u32 = u32::MAX;
 
 const PARALLEL_MIN_N: usize = 50_000;
@@ -89,7 +91,13 @@ fn in_circle(a: Pt, b: Pt, c: Pt, p: Pt) -> bool {
     if -det > errbound {
         return false;
     }
-    incircle(co(a), co(b), co(c), co(p)) > 0.0
+    in_circle_slow(a, b, c, p)
+}
+
+#[cold]
+#[inline(never)]
+fn in_circle_slow(a: Pt, b: Pt, c: Pt, p: Pt) -> bool {
+    exact::incircle(a, b, c, p).unwrap_or_else(|| incircle(co(a), co(b), co(c), co(p))) > 0.0
 }
 
 #[inline]
@@ -477,7 +485,7 @@ impl Sweep<'_> {
         self.hull_prev[nxt as usize] = i;
         self.hull_next[i as usize] = nxt;
 
-        self.hash_set(p, i);
+        self.hull_hash[key] = i;
         let pe = self.pts[e as usize];
         self.hash_set(pe, e);
     }
@@ -493,38 +501,48 @@ pub fn triangulate(pts: &[Pt]) -> Vec<u32> {
     triangulate_seq(pts)
 }
 
-fn dedup_sorted_sites(pts: &[Pt]) -> Vec<u32> {
+// Maps an `f64` to an `i64` whose integer order matches `f64::total_cmp`; the map is its own inverse.
+#[inline]
+fn total_order_key(v: f64) -> i64 {
+    let b = v.to_bits() as i64;
+    b ^ (((b >> 63) as u64) >> 1) as i64
+}
+
+fn dedup_sorted_sites(pts: &[Pt]) -> (Vec<u32>, Vec<Pt>) {
     let n = pts.len();
-    let mut order: Vec<u32> = (0..n as u32).collect();
-    order.par_sort_unstable_by(|&a, &b| {
-        pts[a as usize][0]
-            .total_cmp(&pts[b as usize][0])
-            .then(pts[a as usize][1].total_cmp(&pts[b as usize][1]))
-            .then(a.cmp(&b))
-    });
+    let mut keyed: Vec<(i64, i64, u32)> = pts
+        .par_iter()
+        .enumerate()
+        .map(|(i, p)| (total_order_key(p[0]), total_order_key(p[1]), i as u32))
+        .collect();
+    keyed.par_sort_unstable();
     let mut sites: Vec<u32> = Vec::with_capacity(n);
-    for &i in &order {
-        if sites
-            .last()
-            .is_none_or(|&last| !same_point(pts[last as usize], pts[i as usize]))
-        {
+    let mut spts: Vec<Pt> = Vec::with_capacity(n);
+    for &(kx, ky, i) in &keyed {
+        let p = [
+            f64::from_bits(total_order_key(f64::from_bits(kx as u64)) as u64),
+            f64::from_bits(total_order_key(f64::from_bits(ky as u64)) as u64),
+        ];
+        if spts.last().is_none_or(|&last| !same_point(last, p)) {
             sites.push(i);
+            spts.push(p);
         }
     }
-    sites
+    (sites, spts)
 }
 
 fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
-    let sites = dedup_sorted_sites(pts);
+    let (sites, spts) = dedup_sorted_sites(pts);
     let m = sites.len();
     if m < 3 {
         return Some(Vec::new());
     }
-    let a = pts[sites[0] as usize];
-    let b = pts[sites[m - 1] as usize];
-    if sites.iter().all(|&i| ccw(a, b, pts[i as usize]) == 0.0) {
+    let a = spts[0];
+    let b = spts[m - 1];
+    if spts.iter().all(|&p| ccw(a, b, p) == 0.0) {
         return Some(Vec::new());
     }
+    let ids: Vec<u32> = (0..m as u32).collect();
 
     let nstrips = strip_count(m);
     if nstrips < 2 {
@@ -540,8 +558,8 @@ fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
     let parts: Vec<StripResult> = ranges
         .par_iter()
         .map(|&(lo, hi)| {
-            let strip = &sites[lo..hi];
-            let mut qe = QuadEdge::with_capacity(pts, 3 * strip.len());
+            let strip = &ids[lo..hi];
+            let mut qe = QuadEdge::with_capacity(&spts, 3 * strip.len());
             let (ldo, rdo) = qe.delaunay(strip)?;
             Some((qe.onext, qe.data, ldo, rdo))
         })
@@ -551,7 +569,7 @@ fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
     let merge_headroom = (total / 4).max(1024);
     let mut handles: Vec<(u32, u32)> = Vec::with_capacity(parts.len());
     let mut combined = QuadEdge {
-        pts,
+        pts: &spts,
         onext: Vec::with_capacity(total + merge_headroom),
         data: Vec::with_capacity(total + merge_headroom),
         free: Vec::new(),
@@ -571,9 +589,7 @@ fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
     }
     let _ = acc_ldo;
 
-    let mut out = Vec::with_capacity(6 * m);
-    extract_triangles(&combined, &mut out);
-    Some(out)
+    Some(extract_triangles(&combined, &sites))
 }
 
 fn strip_count(m: usize) -> usize {
@@ -762,19 +778,9 @@ impl<'a> QuadEdge<'a> {
     fn left_of(&self, v: u32, e: u32) -> bool {
         ccw(self.p(v), self.p(self.org(e)), self.p(self.dest(e))) > 0.0
     }
-
-    #[inline]
-    fn in_circle_e(&self, a: u32, b: u32, c: u32, d: u32) -> bool {
-        in_circle(self.p(a), self.p(b), self.p(c), self.p(d))
-    }
 }
 
 impl QuadEdge<'_> {
-    #[inline]
-    fn valid(&self, e: u32, basel: u32) -> bool {
-        self.right_of(self.dest(e), basel)
-    }
-
     fn merge(&mut self, ldo: u32, ldi: u32, rdi: u32, rdo: u32) -> Option<(u32, u32)> {
         let (mut ldo, mut ldi, mut rdi, rdo) = (ldo, ldi, rdi, rdo);
 
@@ -809,59 +815,61 @@ impl QuadEdge<'_> {
             if guard > cap {
                 return None;
             }
+            let bd = self.p(self.dest(basel));
+            let bo = self.p(self.org(basel));
             let mut lcand = self.onext(Self::sym(basel));
-            if self.valid(lcand, basel) {
+            let mut lp = self.p(self.dest(lcand));
+            let mut l_valid = ccw(lp, bd, bo) > 0.0;
+            if l_valid {
                 let mut g = 0usize;
-                while self.in_circle_e(
-                    self.dest(basel),
-                    self.org(basel),
-                    self.dest(lcand),
-                    self.dest(self.onext(lcand)),
-                ) {
+                loop {
                     let t = self.onext(lcand);
+                    let tp = self.p(self.dest(t));
+                    if !in_circle(bd, bo, lp, tp) {
+                        break;
+                    }
                     self.delete_edge(lcand);
                     lcand = t;
+                    lp = tp;
                     g += 1;
                     if g > cap {
                         return None;
                     }
+                }
+                if g > 0 {
+                    l_valid = ccw(lp, bd, bo) > 0.0;
                 }
             }
 
             let mut rcand = self.oprev(basel);
-            if self.valid(rcand, basel) {
+            let mut rp = self.p(self.dest(rcand));
+            let mut r_valid = ccw(rp, bd, bo) > 0.0;
+            if r_valid {
                 let mut g = 0usize;
-                while self.in_circle_e(
-                    self.dest(basel),
-                    self.org(basel),
-                    self.dest(rcand),
-                    self.dest(self.oprev(rcand)),
-                ) {
+                loop {
                     let t = self.oprev(rcand);
+                    let tp = self.p(self.dest(t));
+                    if !in_circle(bd, bo, rp, tp) {
+                        break;
+                    }
                     self.delete_edge(rcand);
                     rcand = t;
+                    rp = tp;
                     g += 1;
                     if g > cap {
                         return None;
                     }
                 }
+                if g > 0 {
+                    r_valid = ccw(rp, bd, bo) > 0.0;
+                }
             }
 
-            let l_valid = self.valid(lcand, basel);
-            let r_valid = self.valid(rcand, basel);
             if !l_valid && !r_valid {
                 break;
             }
 
-            if !l_valid
-                || (r_valid
-                    && self.in_circle_e(
-                        self.dest(lcand),
-                        self.org(lcand),
-                        self.org(rcand),
-                        self.dest(rcand),
-                    ))
-            {
+            if !l_valid || (r_valid && in_circle(lp, bd, bo, rp)) {
                 basel = self.connect(rcand, Self::sym(basel));
             } else {
                 basel = self.connect(Self::sym(basel), Self::sym(lcand));
@@ -907,39 +915,46 @@ impl QuadEdge<'_> {
     }
 }
 
-fn extract_triangles(qe: &QuadEdge<'_>, out: &mut Vec<u32>) {
-    let mut seen = vec![false; qe.onext.len()];
+// Emits each face from its lowest-numbered edge, which is the edge a serial scan meets first.
+// That keeps the serial output order with no shared `seen` state, so the scan runs in parallel.
+fn extract_triangles(qe: &QuadEdge<'_>, sites: &[u32]) -> Vec<u32> {
+    let mut dead = vec![false; qe.onext.len() / 4];
     for &slot in &qe.free {
-        seen[slot as usize] = true;
-        seen[QuadEdge::sym(slot) as usize] = true;
+        dead[slot as usize / 4] = true;
     }
-    for start in (0..qe.onext.len() as u32).step_by(4) {
-        if qe.org(start) == EMPTY {
-            continue;
-        }
-        for e0 in [start, QuadEdge::sym(start)] {
-            if seen[e0 as usize] {
-                continue;
+    let chunks: Vec<Vec<u32>> = dead
+        .par_chunks(4096)
+        .enumerate()
+        .map(|(c, chunk)| {
+            let mut out = Vec::with_capacity(6 * chunk.len());
+            for (k, &is_dead) in chunk.iter().enumerate() {
+                let start = ((c * 4096 + k) * 4) as u32;
+                if is_dead || qe.org(start) == EMPTY {
+                    continue;
+                }
+                for e0 in [start, QuadEdge::sym(start)] {
+                    let e1 = qe.lnext(e0);
+                    let e2 = qe.lnext(e1);
+                    if e1 < e0 || e2 < e0 || qe.lnext(e2) != e0 {
+                        continue;
+                    }
+                    let a = qe.org(e0);
+                    let b = qe.org(e1);
+                    let c = qe.org(e2);
+                    if ccw(qe.p(a), qe.p(b), qe.p(c)) <= 0.0 {
+                        continue;
+                    }
+                    out.extend_from_slice(&[
+                        sites[a as usize],
+                        sites[b as usize],
+                        sites[c as usize],
+                    ]);
+                }
             }
-            let e1 = qe.lnext(e0);
-            let e2 = qe.lnext(e1);
-            if qe.lnext(e2) != e0 {
-                continue;
-            }
-            let a = qe.org(e0);
-            let b = qe.org(e1);
-            let c = qe.org(e2);
-            if ccw(qe.p(a), qe.p(b), qe.p(c)) <= 0.0 {
-                continue;
-            }
-            seen[e0 as usize] = true;
-            seen[e1 as usize] = true;
-            seen[e2 as usize] = true;
-            out.push(a);
-            out.push(b);
-            out.push(c);
-        }
-    }
+            out
+        })
+        .collect();
+    chunks.concat()
 }
 
 #[allow(clippy::float_cmp)]
