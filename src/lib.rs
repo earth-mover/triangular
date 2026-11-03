@@ -27,8 +27,17 @@ mod exact;
 const EMPTY: u32 = u32::MAX;
 
 const PARALLEL_MIN_N: usize = 50_000;
+const DELAUNAY_PARALLEL_MIN_N: usize = 10_000;
 
 const STRIP_MIN_PTS: usize = 1024;
+const STRIP_TARGET_PTS: usize = 4096;
+// A planar graph on k sites has at most 3k edges, so 3 quad edges per site never run out.
+const QUAD_SLOTS: usize = 12;
+const BUCKETS_PER_STRIP: usize = 16;
+const GRID_COLUMN_MIN_PTS: usize = 128;
+// Uniform input flips about 3 times per point. Rows of collinear points flip 30 or more times,
+// and divide and conquer is faster on them.
+const STRIP_MAX_FLIPS_PER_PT: usize = 12;
 const PAR_SORT_MIN_N: usize = 1 << 14;
 const EXTRACT_CHUNK_QUADS: usize = 1 << 14;
 const HULL_FILTER_MIN_N: usize = 64;
@@ -44,9 +53,10 @@ const PRED_EPSILON: f64 = f64::EPSILON * 0.5;
 const CCW_ERRBOUND_A: f64 = (3.0 + 16.0 * PRED_EPSILON) * PRED_EPSILON;
 const ICC_ERRBOUND_A: f64 = (10.0 + 96.0 * PRED_EPSILON) * PRED_EPSILON;
 
-type StripResult = (Vec<u32>, Vec<u32>, u32, u32);
-
 pub type Pt = [f64; 2];
+
+type Sites = (Vec<Pt>, Vec<u32>, Vec<(usize, usize)>);
+type Grouped = (Vec<SortKey>, Vec<usize>);
 
 #[inline]
 fn co(p: Pt) -> Coord<f64> {
@@ -97,13 +107,52 @@ fn in_circle(a: Pt, b: Pt, c: Pt, p: Pt) -> bool {
     if -det > errbound {
         return false;
     }
-    in_circle_slow(a, b, c, p)
+    in_circle_slow(a, b, c, p, det)
 }
 
 #[cold]
 #[inline(never)]
-fn in_circle_slow(a: Pt, b: Pt, c: Pt, p: Pt) -> bool {
+fn in_circle_slow(a: Pt, b: Pt, c: Pt, p: Pt, det: f64) -> bool {
+    if small_dyadic(a, b, c, p) {
+        return det > 0.0;
+    }
     exact::incircle(a, b, c, p).unwrap_or_else(|| incircle(co(a), co(b), co(c), co(p))) > 0.0
+}
+
+#[inline]
+fn exact_diff(a: f64, b: f64) -> bool {
+    let x = a - b;
+    let bvirt = a - x;
+    let avirt = x + bvirt;
+    (bvirt - b) + (a - avirt) == 0.0
+}
+
+// True when the differences to p are exact integer multiples of 2^e below 2^(e+12): then
+// every in_circle term stays below 2^53 and the float determinant is exact.
+#[inline]
+#[allow(clippy::float_cmp)]
+fn small_dyadic(a: Pt, b: Pt, c: Pt, p: Pt) -> bool {
+    let mut m = 0.0f64;
+    let mut d = [0.0f64; 6];
+    for (k, q) in [a, b, c].into_iter().enumerate() {
+        for j in 0..2 {
+            if !exact_diff(q[j], p[j]) {
+                return false;
+            }
+            d[2 * k + j] = q[j] - p[j];
+            m = m.max(d[2 * k + j].abs());
+        }
+    }
+    let exp = ((m.to_bits() >> 52) & 0x7ff) as i32 - 1023;
+    if !(-240..=240).contains(&exp) {
+        return false;
+    }
+    let scale = f64::from_bits(((1023 - (exp + 1 - 12)) as u64) << 52);
+    d.iter().all(|&x| {
+        let s = x * scale;
+        // A nonzero difference that underflows to 0 is not a multiple of 2^e.
+        s == s.trunc() && (s != 0.0 || x == 0.0)
+    })
 }
 
 #[inline]
@@ -227,11 +276,17 @@ fn find_seed(pts: &[Pt]) -> Option<(usize, usize, usize)> {
     )?;
     let p1 = pts[i1];
 
-    let i2 = argmin(
-        (0..n)
-            .filter(|&i| i != i0 && i != i1 && !same_point(p0, pts[i]) && !same_point(p1, pts[i])),
-        |i| circumradius2(p0, p1, pts[i]),
-    )?;
+    let third = |i: usize| i != i0 && i != i1 && !same_point(p0, pts[i]) && !same_point(p1, pts[i]);
+    let mut i2 = argmin((0..n).filter(|&i| third(i)), |i| {
+        circumradius2(p0, p1, pts[i])
+    })?;
+    // A rounded determinant can give an exactly collinear point a finite radius and a zero-area seed.
+    if ccw(p0, p1, pts[i2]) == 0.0 {
+        i2 = argmin(
+            (0..n).filter(|&i| third(i) && ccw(p0, p1, pts[i]) != 0.0),
+            |i| circumradius2(p0, p1, pts[i]),
+        )?;
+    }
     let p2 = pts[i2];
 
     if circumradius2(p0, p1, p2).is_infinite() {
@@ -256,6 +311,8 @@ struct Sweep<'a> {
     hash_size: usize,
     center: Pt,
     edge_stack: Vec<u32>,
+    flips: usize,
+    max_flips: usize,
 }
 
 impl Sweep<'_> {
@@ -317,6 +374,7 @@ impl Sweep<'_> {
                 pts[pl as usize],
                 pts[p1 as usize],
             ) {
+                self.flips += 1;
                 self.triangles[a] = p1;
                 self.triangles[b] = p0;
                 let hbl = self.halfedges[bl];
@@ -342,7 +400,7 @@ impl Sweep<'_> {
         ccw(self.pts[a as usize], self.pts[b as usize], p) < 0.0
     }
 
-    fn run(&mut self, center: Pt, seed: (usize, usize, usize)) {
+    fn run(&mut self, center: Pt, seed: (usize, usize, usize)) -> bool {
         let (i0, i1, i2) = seed;
         self.center = center;
 
@@ -369,7 +427,11 @@ impl Sweep<'_> {
                 continue;
             }
             self.insert(i as u32);
+            if self.flips > self.max_flips {
+                return false;
+            }
         }
+        true
     }
 
     fn insert(&mut self, i: u32) {
@@ -452,7 +514,8 @@ impl Sweep<'_> {
 
 #[must_use]
 pub fn triangulate(pts: &[Pt]) -> Vec<u32> {
-    if pts.len() >= PARALLEL_MIN_N {
+    // `triangulate_seq` returns the same empty result as the parallel path for degenerate input.
+    if pts.len() >= DELAUNAY_PARALLEL_MIN_N && rayon::current_num_threads() >= 2 {
         if let Some(tris) = triangulate_parallel(pts) {
             return tris;
         }
@@ -483,7 +546,20 @@ fn sorted_unique(mut keyed: Vec<SortKey>) -> Vec<SortKey> {
     keyed
 }
 
-fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
+fn dedup_into(sorted: &[SortKey], spts: &mut [Pt], ids: &mut [u32]) -> usize {
+    let mut k = 0;
+    for key in sorted {
+        let p = key_point(key);
+        if k == 0 || !same_point(spts[k - 1], p) {
+            spts[k] = p;
+            ids[k] = key.2;
+            k += 1;
+        }
+    }
+    k
+}
+
+fn sorted_sites(pts: &[Pt], nstrips: usize) -> Sites {
     let keyed = sorted_unique(
         pts.par_iter()
             .enumerate()
@@ -491,95 +567,420 @@ fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
             .collect(),
     );
     let m = keyed.len();
+    let spts: Vec<Pt> = keyed.par_iter().map(key_point).collect();
+    let ids: Vec<u32> = keyed.par_iter().map(|k| k.2).collect();
+    let ranges = (0..nstrips)
+        .map(|s| (s * m / nstrips, (s + 1) * m / nstrips))
+        .filter(|&(lo, hi)| hi > lo)
+        .collect();
+    (spts, ids, ranges)
+}
+
+#[derive(Clone, Copy)]
+struct XBuckets {
+    xmin: f64,
+    scale: f64,
+    n: usize,
+}
+
+impl XBuckets {
+    // The map is monotone in x, so equal x share a bucket and strips never overlap in x.
+    #[inline]
+    fn of(self, x: f64) -> usize {
+        (((x - self.xmin) * self.scale) as usize).min(self.n - 1)
+    }
+}
+
+struct BucketPlan {
+    xb: XBuckets,
+    chunk: usize,
+    hists: Vec<Vec<u32>>,
+    strip_of: Vec<u32>,
+    sizes: Vec<usize>,
+}
+
+impl BucketPlan {
+    #[inline]
+    fn strip(&self, x: f64) -> usize {
+        self.strip_of[self.xb.of(x)] as usize
+    }
+}
+
+fn bucket_plan(pts: &[Pt], nstrips: usize) -> Option<BucketPlan> {
+    let n = pts.len();
+    let (xmin, xmax) = pts.par_iter().map(|p| (p[0], p[0])).reduce(
+        || (f64::INFINITY, f64::NEG_INFINITY),
+        |a, b| (a.0.min(b.0), a.1.max(b.1)),
+    );
+    let nbuckets = nstrips * BUCKETS_PER_STRIP;
+    let scale = nbuckets as f64 / (xmax - xmin);
+    if !(scale.is_finite() && scale > 0.0) {
+        return None;
+    }
+    let xb = XBuckets {
+        xmin,
+        scale,
+        n: nbuckets,
+    };
+    let chunk = n.div_ceil(4 * rayon::current_num_threads()).max(1 << 12);
+    let hists: Vec<Vec<u32>> = pts
+        .par_chunks(chunk)
+        .map(|c| {
+            let mut h = vec![0u32; nbuckets];
+            for p in c {
+                h[xb.of(p[0])] += 1;
+            }
+            h
+        })
+        .collect();
+    let mut totals = vec![0usize; nbuckets];
+    for h in &hists {
+        for (t, &c) in totals.iter_mut().zip(h) {
+            *t += c as usize;
+        }
+    }
+
+    let target = n / nstrips;
+    let mut strip_of = vec![0u32; nbuckets];
+    let mut sizes: Vec<usize> = vec![0];
+    for (b, &t) in totals.iter().enumerate() {
+        if sizes[sizes.len() - 1] >= target {
+            sizes.push(0);
+        }
+        let last = sizes.len() - 1;
+        sizes[last] += t;
+        strip_of[b] = last as u32;
+    }
+    if sizes.len() > 1 && sizes[sizes.len() - 1] < target / 2 {
+        let tail = sizes.pop().unwrap_or(0);
+        let last = sizes.len() - 1;
+        sizes[last] += tail;
+        for s in &mut strip_of {
+            *s = (*s).min(last as u32);
+        }
+    }
+    if sizes.len() < 2 || sizes.iter().any(|&k| k > 4 * target) {
+        return None;
+    }
+    Some(BucketPlan {
+        xb,
+        chunk,
+        hists,
+        strip_of,
+        sizes,
+    })
+}
+
+// Strips are x ranges, each sorted on its own. The global sort in `sorted_sites` handles skewed x.
+fn bucketed_sites(pts: &[Pt], nstrips: usize) -> Option<Sites> {
+    let plan = bucket_plan(pts, nstrips)?;
+    let nstrips = plan.sizes.len();
+    let grouped: Vec<Grouped> = pts
+        .par_chunks(plan.chunk)
+        .zip(plan.hists.par_iter())
+        .enumerate()
+        .map(|(c, (part, h))| {
+            let mut cursor = vec![0usize; nstrips + 1];
+            for (b, &k) in h.iter().enumerate() {
+                cursor[plan.strip_of[b] as usize + 1] += k as usize;
+            }
+            for s in 0..nstrips {
+                cursor[s + 1] += cursor[s];
+            }
+            let starts = cursor.clone();
+            let mut buf: Vec<SortKey> = vec![(0, 0, 0); part.len()];
+            for (j, &p) in part.iter().enumerate() {
+                let s = plan.strip(p[0]);
+                buf[cursor[s]] = sort_key(p, (c * plan.chunk + j) as u32);
+                cursor[s] += 1;
+            }
+            (buf, starts)
+        })
+        .collect();
+
+    let n = pts.len();
+    let mut spts = vec![[0.0; 2]; n];
+    let mut ids = vec![0u32; n];
+    let mut jobs = Vec::with_capacity(nstrips);
+    let (mut sp_rest, mut id_rest) = (spts.as_mut_slice(), ids.as_mut_slice());
+    let mut off = 0;
+    for (s, &k) in plan.sizes.iter().enumerate() {
+        let (sp, sp_tail) = sp_rest.split_at_mut(k);
+        let (id, id_tail) = id_rest.split_at_mut(k);
+        jobs.push((s, off, sp, id));
+        sp_rest = sp_tail;
+        id_rest = id_tail;
+        off += k;
+    }
+    let ranges: Vec<(usize, usize)> = jobs
+        .into_par_iter()
+        .map(|(s, off, sp, id)| {
+            let mut strip: Vec<SortKey> = Vec::with_capacity(sp.len());
+            for (buf, starts) in &grouped {
+                strip.extend_from_slice(&buf[starts[s]..starts[s + 1]]);
+            }
+            strip.sort_unstable();
+            (off, off + dedup_into(&strip, sp, id))
+        })
+        .collect();
+    if ranges.iter().any(|&(lo, hi)| hi - lo < 2) {
+        return None;
+    }
+    Some((spts, ids, ranges))
+}
+
+fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
+    let nstrips = strip_count(pts.len());
+    let (spts, ids, ranges) =
+        bucketed_sites(pts, nstrips).unwrap_or_else(|| sorted_sites(pts, nstrips));
+    let m: usize = ranges.iter().map(|&(lo, hi)| hi - lo).sum();
     if m < 3 {
         return Some(Vec::new());
     }
-    let sites: Vec<u32> = keyed.par_iter().map(|k| k.2).collect();
-    let spts: Vec<Pt> = keyed.par_iter().map(key_point).collect();
-    drop(keyed);
-    let (a, b) = (spts[0], spts[m - 1]);
-    if spts.iter().all(|&p| ccw(a, b, p) == 0.0) {
+    let a = spts[ranges[0].0];
+    let b = spts[ranges[ranges.len() - 1].1 - 1];
+    if ranges
+        .par_iter()
+        .all(|&(lo, hi)| spts[lo..hi].iter().all(|&p| ccw(a, b, p) == 0.0))
+    {
         return Some(Vec::new());
     }
-    // Vertex ids are sorted ranks for memory locality. `extract_triangles` maps them back to input ids.
-
-    let nstrips = strip_count(m);
-    if nstrips < 2 {
+    if ranges.len() < 2 {
         return None;
     }
+    // Vertex ids are positions in `spts` for memory locality. `extract_triangles` maps them back to input ids.
 
-    let bounds: Vec<usize> = (0..=nstrips).map(|s| s * m / nstrips).collect();
-    let ranges: Vec<(usize, usize)> = (0..nstrips)
-        .map(|s| (bounds[s], bounds[s + 1]))
-        .filter(|&(lo, hi)| hi > lo)
-        .collect();
+    let len = QUAD_SLOTS * spts.len();
+    if len >= EMPTY as usize {
+        return None;
+    }
+    let mut onext = vec![0u32; len];
+    let mut data = vec![0u32; len];
+    let root = build_strips(&spts, &ranges, &mut onext, &mut data, 0)?;
+    for &slot in &root.free {
+        data[slot as usize] = EMPTY;
+    }
+    for &(lo, hi) in &root.spare {
+        data[lo as usize..hi as usize].fill(EMPTY);
+    }
+    let qe = QuadEdge::new(&spts, &mut onext, &mut data, 0, Vec::new(), Vec::new());
+    Some(extract_triangles(&qe, &ids))
+}
 
-    let parts: Vec<StripResult> = ranges
-        .par_iter()
-        .map(|&(lo, hi)| {
-            let mut qe = QuadEdge::with_capacity(&spts, 3 * (hi - lo));
-            let (ldo, rdo) = qe.delaunay(lo as u32, hi as u32)?;
-            Some((qe.onext, qe.data, ldo, rdo))
-        })
-        .collect::<Option<Vec<StripResult>>>()?;
+struct Built {
+    ldo: u32,
+    rdo: u32,
+    free: Vec<u32>,
+    spare: Vec<(u32, u32)>,
+}
 
-    let total: usize = parts.iter().map(|p| p.0.len()).sum();
-    let merge_headroom = (total / 4).max(1024);
-    let mut handles: Vec<(u32, u32)> = Vec::with_capacity(parts.len());
-    let mut combined = QuadEdge {
-        pts: &spts,
-        onext: Vec::with_capacity(total + merge_headroom),
-        data: Vec::with_capacity(total + merge_headroom),
-        free: Vec::new(),
+fn build_strips(
+    spts: &[Pt],
+    ranges: &[(usize, usize)],
+    onext: &mut [u32],
+    data: &mut [u32],
+    base: u32,
+) -> Option<Built> {
+    if let [(lo, hi)] = *ranges {
+        if !grid_columns(&spts[lo..hi]) {
+            if let Some(built) = sweep_strip(spts, lo, hi, onext, data, base) {
+                return Some(built);
+            }
+        }
+        let spare = vec![(base, base + onext.len() as u32)];
+        let mut qe = QuadEdge::new(spts, onext, data, base, Vec::new(), spare);
+        let (ldo, rdo) = qe.delaunay(lo as u32, hi as u32)?;
+        return Some(Built {
+            ldo,
+            rdo,
+            free: qe.free,
+            spare: qe.spare,
+        });
+    }
+    let mid = ranges.len() / 2;
+    let split = QUAD_SLOTS * (ranges[mid].0 - ranges[0].0);
+    let (left, right) = {
+        let (lo_on, hi_on) = onext.split_at_mut(split);
+        let (lo_da, hi_da) = data.split_at_mut(split);
+        let right_base = base + split as u32;
+        rayon::join(
+            || build_strips(spts, &ranges[..mid], lo_on, lo_da, base),
+            || build_strips(spts, &ranges[mid..], hi_on, hi_da, right_base),
+        )
     };
-    for (onext, data, ldo, rdo) in parts {
-        let off = combined.onext.len() as u32;
-        combined.onext.extend(onext.into_iter().map(|x| x + off));
-        combined.data.extend(data);
-        handles.push((ldo + off, rdo + off));
-    }
+    let (mut left, mut right) = (left?, right?);
+    left.free.append(&mut right.free);
+    left.spare.append(&mut right.spare);
+    let mut qe = QuadEdge::new(spts, onext, data, base, left.free, left.spare);
+    let (ldo, rdo) = qe.merge(left.ldo, left.rdo, right.ldo, right.rdo)?;
+    Some(Built {
+        ldo,
+        rdo,
+        free: qe.free,
+        spare: qe.spare,
+    })
+}
 
-    let (mut acc_ldo, mut acc_rdi) = handles[0];
-    for &(ldo, rdo) in &handles[1..] {
-        let (nldo, nrdo) = combined.merge(acc_ldo, acc_rdi, ldo, rdo)?;
-        acc_ldo = nldo;
-        acc_rdi = nrdo;
-    }
-    let _ = acc_ldo;
-
-    Some(extract_triangles(&combined, &sites))
+// Divide and conquer is faster than the sweep on long grid columns.
+#[allow(clippy::float_cmp)]
+fn grid_columns(strip: &[Pt]) -> bool {
+    let columns = 1 + strip.windows(2).filter(|w| w[0][0] != w[1][0]).count();
+    strip.len() >= GRID_COLUMN_MIN_PTS * columns
 }
 
 fn strip_count(m: usize) -> usize {
-    let cores = rayon::current_num_threads().max(1);
-    let target = cores.saturating_sub(2).clamp(1, 64);
-    let by_size = m / STRIP_MIN_PTS;
-    target.min(by_size.max(1))
+    let threads = rayon::current_num_threads();
+    threads
+        .max(m / STRIP_TARGET_PTS)
+        .min(m / STRIP_MIN_PTS)
+        .max(1)
 }
 
 fn triangulate_seq(pts: &[Pt]) -> Vec<u32> {
-    let n = pts.len();
-    if n < 3 {
-        return Vec::new();
-    }
-
-    let Some((i0, i1, i2)) = find_seed(pts) else {
+    let Some((mut tris, _, perm)) = sweep(pts, usize::MAX) else {
         return Vec::new();
     };
-    let center = circumcenter(pts[i0], pts[i1], pts[i2]);
+    for t in &mut tris {
+        *t = perm[*t as usize];
+    }
+    tris
+}
 
-    let mut keyed: Vec<(i64, u32)> = pts
-        .iter()
-        .enumerate()
-        .map(|(i, &p)| (total_order_key(dist2(center, p)), i as u32))
-        .collect();
-    keyed.sort_unstable_by(|&(ka, a), &(kb, b)| {
+fn sweep_strip(
+    spts: &[Pt],
+    lo: usize,
+    hi: usize,
+    onext: &mut [u32],
+    data: &mut [u32],
+    base: u32,
+) -> Option<Built> {
+    let k = hi - lo;
+    let (tri, half, perm) = sweep(&spts[lo..hi], STRIP_MAX_FLIPS_PER_PT * k)?;
+    let global = |l: u32| lo as u32 + perm[l as usize];
+
+    let nh = tri.len();
+    let mut dir = vec![0u32; nh];
+    let mut hull_out = vec![EMPTY; k];
+    let mut nquads = 0u32;
+    let mut hull_len = 0usize;
+    for h in 0..nh {
+        let opp = half[h];
+        if opp == EMPTY {
+            hull_len += 1;
+            hull_out[tri[h] as usize] = h as u32;
+        }
+        if opp == EMPTY || (h as u32) < opp {
+            dir[h] = 4 * nquads;
+            if opp != EMPTY {
+                dir[opp as usize] = 4 * nquads + 2;
+            }
+            nquads += 1;
+        }
+    }
+    // A rounding fault can make the sweep drop a vertex. Divide and conquer then triangulates the strip.
+    if nh / 3 + hull_len + 2 != 2 * k || 4 * nquads as usize > onext.len() {
+        return None;
+    }
+
+    for h in 0..nh {
+        let d = dir[h];
+        let nxt = next_he(h);
+        data[d as usize] = global(tri[h]);
+        onext[d as usize] = base + QuadEdge::sym(dir[prev_he(h)]);
+        if half[h] == EMPTY {
+            let s = QuadEdge::sym(d);
+            data[s as usize] = global(tri[nxt]);
+            onext[s as usize] = base + dir[hull_out[tri[nxt] as usize] as usize];
+        }
+    }
+    for q in 0..nquads {
+        for d in [4 * q, 4 * q + 2] {
+            let on = onext[d as usize] - base;
+            onext[QuadEdge::rot(on) as usize] = base + QuadEdge::inv_rot(d);
+        }
+    }
+
+    let first = lo as u32;
+    let last = (hi - 1) as u32;
+    let mut ldo = EMPTY;
+    let mut rdo = EMPTY;
+    for &h in &hull_out {
+        if h == EMPTY {
+            continue;
+        }
+        let h = h as usize;
+        if global(tri[h]) == first {
+            ldo = base + dir[h];
+        }
+        if global(tri[next_he(h)]) == last {
+            rdo = base + QuadEdge::sym(dir[h]);
+        }
+    }
+    if ldo == EMPTY || rdo == EMPTY {
+        return None;
+    }
+    Some(Built {
+        ldo,
+        rdo,
+        free: Vec::new(),
+        spare: vec![(base + 4 * nquads, base + onext.len() as u32)],
+    })
+}
+
+// Bucket order is monotone in distance, so sorting each bucket gives the order of one full sort.
+fn sort_by_distance(pts: &[Pt], center: Pt) -> Vec<u32> {
+    let cmp = |&(ka, a): &(i64, u32), &(kb, b): &(i64, u32)| {
         ka.cmp(&kb)
             .then_with(|| sort_key(pts[a as usize], a).cmp(&sort_key(pts[b as usize], b)))
-    });
+    };
+    let n = pts.len();
+    let d2: Vec<f64> = pts.iter().map(|&p| dist2(center, p)).collect();
+    let max = d2.iter().fold(0.0f64, |m, &v| m.max(v));
+    let scale = (n - 1) as f64 / max;
+    let mut keyed: Vec<(i64, u32)>;
+    if max.is_finite() && scale.is_finite() {
+        let bucket = |v: f64| ((v * scale) as usize).min(n - 1);
+        let mut start = vec![0u32; n + 1];
+        for &v in &d2 {
+            start[bucket(v) + 1] += 1;
+        }
+        for b in 0..n {
+            start[b + 1] += start[b];
+        }
+        keyed = vec![(0, 0); n];
+        let mut fill = start.clone();
+        for (i, &v) in d2.iter().enumerate() {
+            let b = bucket(v);
+            keyed[fill[b] as usize] = (total_order_key(v), i as u32);
+            fill[b] += 1;
+        }
+        for w in start.windows(2) {
+            if w[1] - w[0] > 1 {
+                keyed[w[0] as usize..w[1] as usize].sort_unstable_by(cmp);
+            }
+        }
+    } else {
+        keyed = d2
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| (total_order_key(v), i as u32))
+            .collect();
+        keyed.sort_unstable_by(cmp);
+    }
+    keyed.into_iter().map(|(_, i)| i).collect()
+}
 
-    let perm: Vec<u32> = keyed.iter().map(|&(_, i)| i).collect();
-    drop(keyed);
+// Returns the triangles and halfedges over positions in `perm`, which maps them to indices of `pts`.
+fn sweep(pts: &[Pt], max_flips: usize) -> Option<(Vec<u32>, Vec<u32>, Vec<u32>)> {
+    let n = pts.len();
+    if n < 3 {
+        return None;
+    }
+
+    let (i0, i1, i2) = find_seed(pts)?;
+    let center = circumcenter(pts[i0], pts[i1], pts[i2]);
+
+    let perm = sort_by_distance(pts, center);
     let permuted: Vec<Pt> = perm.iter().map(|&i| pts[i as usize]).collect();
     let pos = |old: usize| perm.iter().position(|&i| i as usize == old).unwrap_or(0);
     let seed = (pos(i0), pos(i1), pos(i2));
@@ -596,29 +997,40 @@ fn triangulate_seq(pts: &[Pt]) -> Vec<u32> {
         hash_size,
         center: [0.0, 0.0],
         edge_stack: Vec::new(),
+        flips: 0,
+        max_flips,
     };
-    sweep.run(center, seed);
-    let mut tris = sweep.triangles;
-    for t in &mut tris {
-        *t = perm[*t as usize];
+    if !sweep.run(center, seed) {
+        return None;
     }
-    tris
+    Some((sweep.triangles, sweep.halfedges, perm))
 }
 
-struct QuadEdge<'a> {
+struct QuadEdge<'a, 's> {
     pts: &'a [Pt],
-    onext: Vec<u32>,
-    data: Vec<u32>,
+    onext: &'s mut [u32],
+    data: &'s mut [u32],
+    base: u32,
     free: Vec<u32>,
+    spare: Vec<(u32, u32)>,
 }
 
-impl<'a> QuadEdge<'a> {
-    fn with_capacity(pts: &'a [Pt], cap: usize) -> Self {
+impl<'a, 's> QuadEdge<'a, 's> {
+    fn new(
+        pts: &'a [Pt],
+        onext: &'s mut [u32],
+        data: &'s mut [u32],
+        base: u32,
+        free: Vec<u32>,
+        spare: Vec<(u32, u32)>,
+    ) -> Self {
         QuadEdge {
             pts,
-            onext: Vec::with_capacity(4 * cap),
-            data: Vec::with_capacity(4 * cap),
-            free: Vec::new(),
+            onext,
+            data,
+            base,
+            free,
+            spare,
         }
     }
 
@@ -639,7 +1051,12 @@ impl<'a> QuadEdge<'a> {
 
     #[inline]
     fn onext(&self, e: u32) -> u32 {
-        self.onext[e as usize]
+        self.onext[(e - self.base) as usize]
+    }
+
+    #[inline]
+    fn set_onext(&mut self, e: u32, v: u32) {
+        self.onext[(e - self.base) as usize] = v;
     }
 
     #[inline]
@@ -654,12 +1071,12 @@ impl<'a> QuadEdge<'a> {
 
     #[inline]
     fn org(&self, e: u32) -> u32 {
-        self.data[e as usize]
+        self.data[(e - self.base) as usize]
     }
 
     #[inline]
     fn dest(&self, e: u32) -> u32 {
-        self.data[Self::sym(e) as usize]
+        self.org(Self::sym(e))
     }
 
     #[inline]
@@ -668,24 +1085,22 @@ impl<'a> QuadEdge<'a> {
     }
 
     #[inline]
-    fn make_edge(&mut self, org: u32, dest: u32) -> u32 {
-        let base = if let Some(slot) = self.free.pop() {
+    fn make_edge(&mut self, org: u32, dest: u32) -> Option<u32> {
+        let e = if let Some(slot) = self.free.pop() {
             slot
         } else {
-            let b = self.onext.len() as u32;
-            self.onext.extend_from_slice(&[0, 0, 0, 0]);
-            self.data.extend_from_slice(&[EMPTY, EMPTY, EMPTY, EMPTY]);
-            b
+            let range = self.spare.last_mut()?;
+            let e = range.0;
+            range.0 += 4;
+            if range.0 >= range.1 {
+                self.spare.pop();
+            }
+            e
         };
-        self.onext[base as usize] = base;
-        self.onext[(base + 1) as usize] = base + 3;
-        self.onext[(base + 2) as usize] = base + 2;
-        self.onext[(base + 3) as usize] = base + 1;
-        self.data[base as usize] = org;
-        self.data[(base + 2) as usize] = dest;
-        self.data[(base + 1) as usize] = EMPTY;
-        self.data[(base + 3) as usize] = EMPTY;
-        base
+        let i = (e - self.base) as usize;
+        self.onext[i..i + 4].copy_from_slice(&[e, e + 3, e + 2, e + 1]);
+        self.data[i..i + 4].copy_from_slice(&[org, EMPTY, dest, EMPTY]);
+        Some(e)
     }
 
     #[inline]
@@ -696,22 +1111,22 @@ impl<'a> QuadEdge<'a> {
         let beta = Self::rot(b_on);
         let al_on = self.onext(alpha);
         let be_on = self.onext(beta);
-        self.onext[a as usize] = b_on;
-        self.onext[b as usize] = a_on;
-        self.onext[alpha as usize] = be_on;
-        self.onext[beta as usize] = al_on;
+        self.set_onext(a, b_on);
+        self.set_onext(b, a_on);
+        self.set_onext(alpha, be_on);
+        self.set_onext(beta, al_on);
     }
 
     #[inline]
-    fn connect(&mut self, a: u32, b: u32) -> u32 {
+    fn connect(&mut self, a: u32, b: u32) -> Option<u32> {
         let da = self.dest(a);
         let ob = self.org(b);
-        let e = self.make_edge(da, ob);
+        let e = self.make_edge(da, ob)?;
         let la = self.lnext(a);
         self.splice(e, la);
         let se = Self::sym(e);
         self.splice(se, b);
-        e
+        Some(e)
     }
 
     #[inline]
@@ -735,7 +1150,7 @@ impl<'a> QuadEdge<'a> {
     }
 }
 
-impl QuadEdge<'_> {
+impl QuadEdge<'_, '_> {
     fn merge(&mut self, ldo: u32, ldi: u32, rdi: u32, rdo: u32) -> Option<(u32, u32)> {
         let (mut ldo, mut ldi, mut rdi, rdo) = (ldo, ldi, rdi, rdo);
 
@@ -755,7 +1170,7 @@ impl QuadEdge<'_> {
             }
         }
 
-        let mut basel = self.connect(Self::sym(rdi), ldi);
+        let mut basel = self.connect(Self::sym(rdi), ldi)?;
         if self.org(ldi) == self.org(ldo) {
             ldo = Self::sym(basel);
         }
@@ -825,43 +1240,43 @@ impl QuadEdge<'_> {
             }
 
             if !l_valid || (r_valid && in_circle(lp, bd, bo, rp)) {
-                basel = self.connect(rcand, Self::sym(basel));
+                basel = self.connect(rcand, Self::sym(basel))?;
             } else {
-                basel = self.connect(Self::sym(basel), Self::sym(lcand));
+                basel = self.connect(Self::sym(basel), Self::sym(lcand))?;
             }
         }
 
         Some((ldo, rdo))
     }
 
-    fn base2(&mut self, s0: u32, s1: u32) -> (u32, u32) {
-        let a = self.make_edge(s0, s1);
-        (a, Self::sym(a))
+    fn base2(&mut self, s0: u32, s1: u32) -> Option<(u32, u32)> {
+        let a = self.make_edge(s0, s1)?;
+        Some((a, Self::sym(a)))
     }
 
-    fn base3(&mut self, s0: u32, s1: u32, s2: u32) -> (u32, u32) {
-        let a = self.make_edge(s0, s1);
-        let b = self.make_edge(s1, s2);
+    fn base3(&mut self, s0: u32, s1: u32, s2: u32) -> Option<(u32, u32)> {
+        let a = self.make_edge(s0, s1)?;
+        let b = self.make_edge(s1, s2)?;
         self.splice(Self::sym(a), b);
         let turn = ccw(self.p(s0), self.p(s1), self.p(s2));
         if turn > 0.0 {
-            let _c = self.connect(b, a);
-            (a, Self::sym(b))
+            self.connect(b, a)?;
+            Some((a, Self::sym(b)))
         } else if turn < 0.0 {
-            let c = self.connect(b, a);
-            (Self::sym(c), c)
+            let c = self.connect(b, a)?;
+            Some((Self::sym(c), c))
         } else {
-            (a, Self::sym(b))
+            Some((a, Self::sym(b)))
         }
     }
 
     fn delaunay(&mut self, lo: u32, hi: u32) -> Option<(u32, u32)> {
         let n = hi - lo;
         if n == 2 {
-            return Some(self.base2(lo, lo + 1));
+            return self.base2(lo, lo + 1);
         }
         if n == 3 {
-            return Some(self.base3(lo, lo + 1, lo + 2));
+            return self.base3(lo, lo + 1, lo + 2);
         }
         let mid = lo + n / 2;
         let (ldo, ldi) = self.delaunay(lo, mid)?;
@@ -872,19 +1287,16 @@ impl QuadEdge<'_> {
 
 // Emits each face from its lowest-numbered edge, which is the edge a serial scan meets first.
 // That keeps the serial output order with no shared `seen` state, so the scan runs in parallel.
-fn extract_triangles(qe: &QuadEdge<'_>, sites: &[u32]) -> Vec<u32> {
-    let mut dead = vec![false; qe.onext.len() / 4];
-    for &slot in &qe.free {
-        dead[slot as usize / 4] = true;
-    }
-    let parts: Vec<Vec<u32>> = dead
-        .par_chunks(EXTRACT_CHUNK_QUADS)
-        .enumerate()
-        .map(|(c, chunk)| {
-            let mut out = Vec::with_capacity(2 * chunk.len() + 16);
-            for (k, &is_dead) in chunk.iter().enumerate() {
-                let start = ((c * EXTRACT_CHUNK_QUADS + k) * 4) as u32;
-                if is_dead || qe.org(start) == EMPTY {
+fn extract_triangles(qe: &QuadEdge<'_, '_>, sites: &[u32]) -> Vec<u32> {
+    let nquads = qe.onext.len() / 4;
+    let parts: Vec<Vec<u32>> = (0..nquads.div_ceil(EXTRACT_CHUNK_QUADS))
+        .into_par_iter()
+        .map(|c| {
+            let quads = c * EXTRACT_CHUNK_QUADS..nquads.min((c + 1) * EXTRACT_CHUNK_QUADS);
+            let mut out = Vec::with_capacity(2 * quads.len() + 16);
+            for q in quads {
+                let start = (q * 4) as u32;
+                if qe.org(start) == EMPTY {
                     continue;
                 }
                 for e0 in [start, QuadEdge::sym(start)] {
