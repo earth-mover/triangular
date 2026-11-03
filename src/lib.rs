@@ -583,8 +583,7 @@ fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
     }
     let _ = acc_ldo;
 
-    let mut out = Vec::with_capacity(6 * m);
-    extract_triangles(&combined, &sites, &mut out);
+    let out = extract_triangles(&combined, &sites);
     Some(out)
 }
 
@@ -924,8 +923,39 @@ impl QuadEdge<'_> {
     }
 }
 
-fn extract_triangles(qe: &QuadEdge<'_>, sites: &[u32], out: &mut Vec<u32>) {
-    for start in (0..qe.onext.len() as u32).step_by(4) {
+const EXTRACT_CHUNK_SLOTS: usize = 1 << 18;
+
+fn extract_triangles(qe: &QuadEdge<'_>, sites: &[u32]) -> Vec<u32> {
+    let len = qe.onext.len() as u32;
+    let chunk = EXTRACT_CHUNK_SLOTS as u32;
+    let parts: Vec<Vec<u32>> = (0..len.div_ceil(chunk))
+        .into_par_iter()
+        .map(|c| {
+            let lo = c * chunk;
+            let hi = (lo + chunk).min(len);
+            let mut out = Vec::with_capacity((hi - lo) as usize * 3 / 4);
+            extract_range(qe, sites, lo, hi, &mut out);
+            out
+        })
+        .collect();
+    let total = parts.iter().map(Vec::len).sum();
+    let mut out = vec![0u32; total];
+    let mut rest = out.as_mut_slice();
+    let mut dests = Vec::with_capacity(parts.len());
+    for part in &parts {
+        let (head, tail) = rest.split_at_mut(part.len());
+        dests.push(head);
+        rest = tail;
+    }
+    dests
+        .into_par_iter()
+        .zip(parts.par_iter())
+        .for_each(|(dst, src)| dst.copy_from_slice(src));
+    out
+}
+
+fn extract_range(qe: &QuadEdge<'_>, sites: &[u32], lo: u32, hi: u32, out: &mut Vec<u32>) {
+    for start in (lo..hi).step_by(4) {
         if qe.org(start) == EMPTY {
             continue;
         }
