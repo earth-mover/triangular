@@ -778,19 +778,9 @@ impl<'a> QuadEdge<'a> {
     fn left_of(&self, v: u32, e: u32) -> bool {
         ccw(self.p(v), self.p(self.org(e)), self.p(self.dest(e))) > 0.0
     }
-
-    #[inline]
-    fn in_circle_e(&self, a: u32, b: u32, c: u32, d: u32) -> bool {
-        in_circle(self.p(a), self.p(b), self.p(c), self.p(d))
-    }
 }
 
 impl QuadEdge<'_> {
-    #[inline]
-    fn valid(&self, e: u32, basel: u32) -> bool {
-        self.right_of(self.dest(e), basel)
-    }
-
     fn merge(&mut self, ldo: u32, ldi: u32, rdi: u32, rdo: u32) -> Option<(u32, u32)> {
         let (mut ldo, mut ldi, mut rdi, rdo) = (ldo, ldi, rdi, rdo);
 
@@ -825,49 +815,53 @@ impl QuadEdge<'_> {
             if guard > cap {
                 return None;
             }
+            let bd = self.p(self.dest(basel));
+            let bo = self.p(self.org(basel));
             let mut lcand = self.onext(Self::sym(basel));
-            let mut l_valid = self.valid(lcand, basel);
+            let mut lp = self.p(self.dest(lcand));
+            let mut l_valid = ccw(lp, bd, bo) > 0.0;
             if l_valid {
                 let mut g = 0usize;
-                while self.in_circle_e(
-                    self.dest(basel),
-                    self.org(basel),
-                    self.dest(lcand),
-                    self.dest(self.onext(lcand)),
-                ) {
+                loop {
                     let t = self.onext(lcand);
+                    let tp = self.p(self.dest(t));
+                    if !in_circle(bd, bo, lp, tp) {
+                        break;
+                    }
                     self.delete_edge(lcand);
                     lcand = t;
+                    lp = tp;
                     g += 1;
                     if g > cap {
                         return None;
                     }
                 }
                 if g > 0 {
-                    l_valid = self.valid(lcand, basel);
+                    l_valid = ccw(lp, bd, bo) > 0.0;
                 }
             }
 
             let mut rcand = self.oprev(basel);
-            let mut r_valid = self.valid(rcand, basel);
+            let mut rp = self.p(self.dest(rcand));
+            let mut r_valid = ccw(rp, bd, bo) > 0.0;
             if r_valid {
                 let mut g = 0usize;
-                while self.in_circle_e(
-                    self.dest(basel),
-                    self.org(basel),
-                    self.dest(rcand),
-                    self.dest(self.oprev(rcand)),
-                ) {
+                loop {
                     let t = self.oprev(rcand);
+                    let tp = self.p(self.dest(t));
+                    if !in_circle(bd, bo, rp, tp) {
+                        break;
+                    }
                     self.delete_edge(rcand);
                     rcand = t;
+                    rp = tp;
                     g += 1;
                     if g > cap {
                         return None;
                     }
                 }
                 if g > 0 {
-                    r_valid = self.valid(rcand, basel);
+                    r_valid = ccw(rp, bd, bo) > 0.0;
                 }
             }
 
@@ -875,15 +869,7 @@ impl QuadEdge<'_> {
                 break;
             }
 
-            if !l_valid
-                || (r_valid
-                    && self.in_circle_e(
-                        self.dest(lcand),
-                        self.org(lcand),
-                        self.org(rcand),
-                        self.dest(rcand),
-                    ))
-            {
+            if !l_valid || (r_valid && in_circle(lp, bd, bo, rp)) {
                 basel = self.connect(rcand, Self::sym(basel));
             } else {
                 basel = self.connect(Self::sym(basel), Self::sym(lcand));
@@ -958,7 +944,11 @@ fn extract_triangles(qe: &QuadEdge<'_>, sites: &[u32]) -> Vec<u32> {
                     if ccw(qe.p(a), qe.p(b), qe.p(c)) <= 0.0 {
                         continue;
                     }
-                    out.extend_from_slice(&[sites[a as usize], sites[b as usize], sites[c as usize]]);
+                    out.extend_from_slice(&[
+                        sites[a as usize],
+                        sites[b as usize],
+                        sites[c as usize],
+                    ]);
                 }
             }
             out
