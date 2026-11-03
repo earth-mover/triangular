@@ -376,6 +376,7 @@ def run_in_subprocess(
     func_name: str,
     points: np.ndarray,
     timeout: float = 60.0,
+    env: dict[str, str] | None = None,
 ) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         tmpdir = Path(tmp)
@@ -383,7 +384,7 @@ def run_in_subprocess(
         out_path = tmpdir / "result.npy"
         np.save(in_path, np.asarray(points, dtype=np.float64))
         here = Path(__file__).resolve().parent
-        child_env = dict(os.environ)
+        child_env = dict(os.environ) | (env or {})
         path_parts = [str(here), str(here.parent / "python")]
         if child_env.get("PYTHONPATH"):
             path_parts.append(child_env["PYTHONPATH"])

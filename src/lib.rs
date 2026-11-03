@@ -559,7 +559,7 @@ fn dedup_into(sorted: &[SortKey], spts: &mut [Pt], ids: &mut [u32]) -> usize {
     k
 }
 
-fn sorted_sites(pts: &[Pt], nstrips: usize) -> Sites {
+fn sorted_sites(pts: &[Pt]) -> Sites {
     let keyed = sorted_unique(
         pts.par_iter()
             .enumerate()
@@ -567,6 +567,8 @@ fn sorted_sites(pts: &[Pt], nstrips: usize) -> Sites {
             .collect(),
     );
     let m = keyed.len();
+    // Dedup can remove most points. Count strips from m so that each strip keeps STRIP_MIN_PTS sites.
+    let nstrips = strip_count(m);
     let spts: Vec<Pt> = keyed.par_iter().map(key_point).collect();
     let ids: Vec<u32> = keyed.par_iter().map(|k| k.2).collect();
     let ranges = (0..nstrips)
@@ -730,9 +732,8 @@ fn bucketed_sites(pts: &[Pt], nstrips: usize) -> Option<Sites> {
 }
 
 fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
-    let nstrips = strip_count(pts.len());
     let (spts, ids, ranges) =
-        bucketed_sites(pts, nstrips).unwrap_or_else(|| sorted_sites(pts, nstrips));
+        bucketed_sites(pts, strip_count(pts.len())).unwrap_or_else(|| sorted_sites(pts));
     let m: usize = ranges.iter().map(|&(lo, hi)| hi - lo).sum();
     if m < 3 {
         return Some(Vec::new());
@@ -745,9 +746,7 @@ fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
     {
         return Some(Vec::new());
     }
-    if ranges.len() < 2 {
-        return None;
-    }
+    // Dedup can leave only one strip. Triangulate it here, because the sequential path sorts all n points again.
     // Vertex ids are positions in `spts` for memory locality. `extract_triangles` maps them back to input ids.
 
     let len = QUAD_SLOTS * spts.len();
@@ -1272,6 +1271,10 @@ impl QuadEdge<'_, '_> {
 
     fn delaunay(&mut self, lo: u32, hi: u32) -> Option<(u32, u32)> {
         let n = hi - lo;
+        // A 1-site range has no edge, and n == 1 gives mid == lo, which recurses with no end.
+        if n < 2 {
+            return None;
+        }
         if n == 2 {
             return self.base2(lo, lo + 1);
         }
