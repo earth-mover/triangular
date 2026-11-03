@@ -493,36 +493,49 @@ pub fn triangulate(pts: &[Pt]) -> Vec<u32> {
     triangulate_seq(pts)
 }
 
-fn dedup_sorted_sites(pts: &[Pt]) -> Vec<u32> {
-    let n = pts.len();
-    let mut order: Vec<u32> = (0..n as u32).collect();
-    order.par_sort_unstable_by(|&a, &b| {
-        pts[a as usize][0]
-            .total_cmp(&pts[b as usize][0])
-            .then(pts[a as usize][1].total_cmp(&pts[b as usize][1]))
-            .then(a.cmp(&b))
-    });
-    let mut sites: Vec<u32> = Vec::with_capacity(n);
-    for &i in &order {
-        if sites
-            .last()
-            .is_none_or(|&last| !same_point(pts[last as usize], pts[i as usize]))
-        {
+#[inline]
+fn total_order_key(x: f64) -> i64 {
+    let b = x.to_bits() as i64;
+    b ^ ((((b >> 63) as u64) >> 1) as i64)
+}
+
+#[inline]
+fn from_total_order_key(k: i64) -> f64 {
+    f64::from_bits(total_order_key(f64::from_bits(k as u64)) as u64)
+}
+
+fn dedup_sorted_sites(pts: &[Pt]) -> (Vec<u32>, Vec<Pt>) {
+    let key = |(i, p): (usize, &Pt)| (total_order_key(p[0]), total_order_key(p[1]), i as u32);
+    let mut keyed: Vec<(i64, i64, u32)>;
+    if pts.len() >= PARALLEL_MIN_N {
+        keyed = pts.par_iter().enumerate().map(key).collect();
+        keyed.par_sort_unstable();
+    } else {
+        keyed = pts.iter().enumerate().map(key).collect();
+        keyed.sort_unstable();
+    }
+    let mut sites: Vec<u32> = Vec::with_capacity(pts.len());
+    let mut sorted: Vec<Pt> = Vec::with_capacity(pts.len());
+    for &(kx, ky, i) in &keyed {
+        let p = [from_total_order_key(kx), from_total_order_key(ky)];
+        if sorted.last().is_none_or(|&l| !same_point(l, p)) {
             sites.push(i);
+            sorted.push(p);
         }
     }
-    sites
+    (sites, sorted)
 }
 
 fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
-    let sites = dedup_sorted_sites(pts);
+    if strip_target() < 2 {
+        return None;
+    }
+    let (sites, sorted) = dedup_sorted_sites(pts);
     let m = sites.len();
     if m < 3 {
         return Some(Vec::new());
     }
-    let a = pts[sites[0] as usize];
-    let b = pts[sites[m - 1] as usize];
-    if sites.iter().all(|&i| ccw(a, b, pts[i as usize]) == 0.0) {
+    if is_collinear(&sorted) {
         return Some(Vec::new());
     }
 
@@ -540,9 +553,8 @@ fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
     let parts: Vec<StripResult> = ranges
         .par_iter()
         .map(|&(lo, hi)| {
-            let strip = &sites[lo..hi];
-            let mut qe = QuadEdge::with_capacity(pts, 3 * strip.len());
-            let (ldo, rdo) = qe.delaunay(strip)?;
+            let mut qe = QuadEdge::with_capacity(&sorted, 3 * (hi - lo));
+            let (ldo, rdo) = qe.delaunay(lo as u32, hi as u32)?;
             Some((qe.onext, qe.data, ldo, rdo))
         })
         .collect::<Option<Vec<StripResult>>>()?;
@@ -551,7 +563,7 @@ fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
     let merge_headroom = (total / 4).max(1024);
     let mut handles: Vec<(u32, u32)> = Vec::with_capacity(parts.len());
     let mut combined = QuadEdge {
-        pts,
+        pts: &sorted,
         onext: Vec::with_capacity(total + merge_headroom),
         data: Vec::with_capacity(total + merge_headroom),
         free: Vec::new(),
@@ -572,15 +584,20 @@ fn triangulate_parallel(pts: &[Pt]) -> Option<Vec<u32>> {
     let _ = acc_ldo;
 
     let mut out = Vec::with_capacity(6 * m);
-    extract_triangles(&combined, &mut out);
+    extract_triangles(&combined, &sites, &mut out);
     Some(out)
 }
 
+fn strip_target() -> usize {
+    rayon::current_num_threads()
+        .max(1)
+        .saturating_sub(2)
+        .clamp(1, 64)
+}
+
 fn strip_count(m: usize) -> usize {
-    let cores = rayon::current_num_threads().max(1);
-    let target = cores.saturating_sub(2).clamp(1, 64);
     let by_size = m / STRIP_MIN_PTS;
-    target.min(by_size.max(1))
+    strip_target().min(by_size.max(1))
 }
 
 fn triangulate_seq(pts: &[Pt]) -> Vec<u32> {
@@ -892,38 +909,33 @@ impl QuadEdge<'_> {
         }
     }
 
-    fn delaunay(&mut self, sites: &[u32]) -> Option<(u32, u32)> {
-        let n = sites.len();
+    fn delaunay(&mut self, lo: u32, hi: u32) -> Option<(u32, u32)> {
+        let n = hi - lo;
         if n == 2 {
-            return Some(self.base2(sites[0], sites[1]));
+            return Some(self.base2(lo, lo + 1));
         }
         if n == 3 {
-            return Some(self.base3(sites[0], sites[1], sites[2]));
+            return Some(self.base3(lo, lo + 1, lo + 2));
         }
-        let half = n / 2;
-        let (ldo, ldi) = self.delaunay(&sites[..half])?;
-        let (rdi, rdo) = self.delaunay(&sites[half..])?;
+        let mid = lo + n / 2;
+        let (ldo, ldi) = self.delaunay(lo, mid)?;
+        let (rdi, rdo) = self.delaunay(mid, hi)?;
         self.merge(ldo, ldi, rdi, rdo)
     }
 }
 
-fn extract_triangles(qe: &QuadEdge<'_>, out: &mut Vec<u32>) {
-    let mut seen = vec![false; qe.onext.len()];
-    for &slot in &qe.free {
-        seen[slot as usize] = true;
-        seen[QuadEdge::sym(slot) as usize] = true;
-    }
+fn extract_triangles(qe: &QuadEdge<'_>, sites: &[u32], out: &mut Vec<u32>) {
     for start in (0..qe.onext.len() as u32).step_by(4) {
         if qe.org(start) == EMPTY {
             continue;
         }
         for e0 in [start, QuadEdge::sym(start)] {
-            if seen[e0 as usize] {
+            let e1 = qe.lnext(e0);
+            if e1 < e0 {
                 continue;
             }
-            let e1 = qe.lnext(e0);
             let e2 = qe.lnext(e1);
-            if qe.lnext(e2) != e0 {
+            if e2 < e0 || qe.lnext(e2) != e0 {
                 continue;
             }
             let a = qe.org(e0);
@@ -932,12 +944,7 @@ fn extract_triangles(qe: &QuadEdge<'_>, out: &mut Vec<u32>) {
             if ccw(qe.p(a), qe.p(b), qe.p(c)) <= 0.0 {
                 continue;
             }
-            seen[e0 as usize] = true;
-            seen[e1 as usize] = true;
-            seen[e2 as usize] = true;
-            out.push(a);
-            out.push(b);
-            out.push(c);
+            out.extend_from_slice(&[sites[a as usize], sites[b as usize], sites[c as usize]]);
         }
     }
 }
@@ -948,10 +955,10 @@ fn same_point(p: Pt, q: Pt) -> bool {
 }
 
 #[allow(clippy::float_cmp)]
-fn is_collinear(pts: &[Pt], uniq: &[usize]) -> bool {
-    let a = pts[uniq[0]];
-    let b = pts[uniq[uniq.len() - 1]];
-    uniq.iter().all(|&i| ccw(a, b, pts[i]) == 0.0)
+fn is_collinear(sorted: &[Pt]) -> bool {
+    let a = sorted[0];
+    let b = sorted[sorted.len() - 1];
+    sorted.iter().all(|&p| ccw(a, b, p) == 0.0)
 }
 
 fn half_chain(pts: &[Pt], seq: impl Iterator<Item = usize>) -> Vec<usize> {
@@ -972,38 +979,21 @@ fn half_chain(pts: &[Pt], seq: impl Iterator<Item = usize>) -> Vec<usize> {
 }
 
 fn hull_edges_full(pts: &[Pt]) -> Vec<[i32; 2]> {
-    let n = pts.len();
-    let mut order: Vec<usize> = (0..n).collect();
-    order.sort_unstable_by(|&a, &b| {
-        pts[a][0]
-            .total_cmp(&pts[b][0])
-            .then(pts[a][1].total_cmp(&pts[b][1]))
-            .then(a.cmp(&b))
-    });
-
-    let mut uniq: Vec<usize> = Vec::with_capacity(n);
-    for &i in &order {
-        if uniq
-            .last()
-            .is_none_or(|&last| !same_point(pts[last], pts[i]))
-        {
-            uniq.push(i);
-        }
-    }
-
-    if uniq.len() < 3 || is_collinear(pts, &uniq) {
+    let (uniq, sorted) = dedup_sorted_sites(pts);
+    let m = sorted.len();
+    if m < 3 || is_collinear(&sorted) {
         return Vec::new();
     }
 
-    let mut hull = half_chain(pts, uniq.iter().copied());
+    let mut hull = half_chain(&sorted, 0..m);
     hull.pop();
-    let mut upper = half_chain(pts, uniq.iter().rev().copied());
+    let mut upper = half_chain(&sorted, (0..m).rev());
     upper.pop();
     hull.append(&mut upper);
 
     let k = hull.len();
     (0..k)
-        .map(|i| [hull[i] as i32, hull[(i + 1) % k] as i32])
+        .map(|i| [uniq[hull[i]] as i32, uniq[hull[(i + 1) % k]] as i32])
         .collect()
 }
 
