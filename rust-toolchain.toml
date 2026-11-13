@@ -1,4 +1,4 @@
 # To bump: raise `channel`, run `just ci`, and land the fallout in the same commit.
 [toolchain]
-channel = "1.99.1"
+channel = "1.100.0"
 components = ["clippy", "rustfmt"]
