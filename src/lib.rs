@@ -1272,8 +1272,8 @@ fn convex_hull<'py>(
 }
 
 #[cfg(feature = "python")]
-#[pymodule]
-fn _triangular(m: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pymodule(name = "_triangular")]
+fn triangular_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(delaunay, m)?)?;
     m.add_function(wrap_pyfunction!(convex_hull, m)?)?;
     Ok(())
